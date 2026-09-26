@@ -90,6 +90,17 @@ class Toolbox:
         self.revealed = revealed_batches
         self._labeled: list[tuple[dict[str, Any], str]] | None = None
         self._records: list[dict[str, Any]] | None = None
+        self._record_source: str | None = None
+        self._has_qc: bool | None = None
+
+    async def record_source(self) -> str:
+        """The customer's records source id, from its onboarding manifest."""
+        if self._record_source is None:
+            doc = await app_db()["customers"].find_one({"_id": self.customer})
+            ids = [m["source_id"] for m in (doc or {}).get("manifest", [])
+                   if m.get("kind") == "records"]
+            self._record_source = ids[0] if ids else RECORD_SOURCE.get(self.customer, "records")
+        return self._record_source
 
     async def _all_records(self) -> list[dict[str, Any]]:
         if self._records is None:
@@ -144,7 +155,10 @@ class Toolbox:
                 key = str(get_path(rec, group_by))
                 groups.setdefault(key, Counter())[lab] += 1
         top = sorted(groups.items(), key=lambda kv: -sum(kv[1].values()))[:15]
-        src = "qc_sheet" if self.customer == "bank" else RECORD_SOURCE[self.customer]
+        if self._has_qc is None:
+            self._has_qc = await app_db()["qc_sheet"].count_documents(
+                {"customer": self.customer}, limit=1) > 0
+        src = "qc_sheet" if self._has_qc else await self.record_source()
         return ({"group_by": group_by, "groups": {k: dict(v) for k, v in top},
                  "n": sum(sum(v.values()) for v in groups.values())}, [src])
 
@@ -157,21 +171,25 @@ class Toolbox:
                         "p90": s[int(len(s) * 0.9)]}
         else:
             out = {"n": len(vals), "top": Counter(map(str, vals)).most_common(12)}
-        return out, [RECORD_SOURCE[self.customer]]
+        return out, [await self.record_source()]
 
     async def _t_search_evidence(self, query: str, source_id: str = "") -> tuple[Any, list[str]]:
         flt: dict[str, Any] = {"customer": self.customer}
         if source_id:
             flt["source_id"] = source_id
         pipe = [{"$vectorSearch": {"index": EVIDENCE_INDEX, "path": "text", "query": query,
-                                   "filter": flt, "numCandidates": 100, "limit": 5}},
-                {"$project": {"_id": 1, "source_id": 1, "text": 1}}]
-        hits = [d async for d in await app_db()["evidence"].aggregate(pipe)]
+                                   "filter": flt, "numCandidates": 150, "limit": 12}},
+                {"$project": {"_id": 1, "source_id": 1, "text": 1, "avail_round": 1}}]
+        # Evidence that only appears in a later round is hidden until then. (Post-filter:
+        # availability is not a security scope, and avail_round isn't an index field yet.)
+        hits = [d async for d in await app_db()["evidence"].aggregate(pipe)
+                if d.get("avail_round", 0) <= self.batch][:5]
         return ([{"id": str(h["_id"]), "source_id": h["source_id"], "text": h["text"][:400]}
                  for h in hits], [h["source_id"] for h in hits])
 
     async def _t_read_source(self, source_id: str, offset: int = 0) -> tuple[Any, list[str]]:
-        cur = app_db()["evidence"].find({"customer": self.customer, "source_id": source_id}
+        cur = app_db()["evidence"].find({"customer": self.customer, "source_id": source_id,
+                                         "avail_round": {"$not": {"$gt": self.batch}}}
                                         ).skip(max(0, offset)).limit(8)
         rows = [{"id": str(d["_id"]), "text": d["text"][:400]} async for d in cur]
         return {"source_id": source_id, "offset": offset, "passages": rows}, [source_id]
@@ -180,5 +198,8 @@ class Toolbox:
         q = question.lower()
         async for o in eval_db()["oracle"].find({"customer": self.customer}):
             if o["keyword"].lower() in q:
-                return {"answer": o["answer"]}, ["customer_contact"]
+                answers = o.get("answers") or [{"from_round": 0, "answer": o.get("answer", "")}]
+                live = [a for a in answers if int(a.get("from_round", 0)) <= self.batch]
+                if live:
+                    return {"answer": live[-1]["answer"]}, ["customer_contact"]
         return {"answer": "Sorry, I don't know."}, ["customer_contact"]

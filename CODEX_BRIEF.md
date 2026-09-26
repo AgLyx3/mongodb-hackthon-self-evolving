@@ -45,7 +45,23 @@ def presentation_rubric(proposal: dict) -> tuple[bool, str, str]   # optional, s
 
 On the builder's customers, once the harness holds the right rules, a mid-tier and a strong model both score 100%. Labels were pure field lookups, and over-broad rules cost nothing. Design yours so that correct rules alone don't reach 100%, and so that model capability and rule precision both matter:
 
-- **Label noise:** 5–10% of *history* labels (QC or outcomes) disagree with `classify()`, as reviewers do. Keep `batch*`/`holdout`/`report` labels clean (those are ground truth). The investigator must see through noisy history.
+- **No random noise.** Every inconsistency must have a cause the agent could, in principle, discover. Where history labels disagree with `classify()` (5–10% of history), it must be because of something real, e.g.:
+  - a reviewer (with a reviewer id on the row) who applied the old threshold until a dated memo;
+  - a team that used a different definition of an outcome;
+  - a batch of cases reviewed during an incident.
+
+  Keep `batch*`/`holdout`/`report` labels clean (those are ground truth).
+
+## Realism requirements: mimic real FDE discovery mess
+
+Read `research/notes/fde_mess.md` (if present; it's being written now) and `research/notes/simulated_personas.md`. Encode at least these, deterministically:
+- **Not written down:** ≥ 1 signal that appears in no document. It is known only to the customer contact (answered only when asked about the specific field or situation), or visible only as a pattern across free-text case notes.
+- **Back-and-forth:**
+  - ≥ 1 decision that is made, then reversed. Use chunks dated in order, with the reversal only available from a later round via `meta["available_from_round"]`.
+  - ≥ 1 customer-contact answer that is confidently wrong in round 1 and corrected later. Use the oracle list form `[{"from_round": 0, "answer": wrong}, {"from_round": 2, "answer": right}]`, with the corrected answer matching the records.
+- **Stakeholders disagree:** an interview and a doc (or two interviewees) disagree. The records settle it.
+- **Stale sources:** a manifest `described_as` that oversells a source ("current SOP") which is actually superseded.
+- **Scoring still has to be possible:** each such mechanism resolves to one final correct rule or definition in the answer key by round 3. Superseded rules must not be in the answer key; the answer key holds only the final truth.
 - **Free-text decisive cases:** for 10–15% of eval cases, the deciding information is only in a free-text field (e.g. `alert.memo`, `player.support_note`) written in natural language with paraphrase. No structured field carries it. At least one planted signal must be of this kind.
   - Encode it as `kind="definition"`, with `field` = the free-text field path (listed in `record_schema`), `meaning_keywords` = 2–4 lowercase words a correct explanation would contain, and `description` = the correct reading.
   - `classify()` still decides these cases, from your own hidden generation variables.

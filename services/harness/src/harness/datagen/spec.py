@@ -41,6 +41,8 @@ class Chunk(BaseModel):
     source_id: str
     kind: SourceKind
     text: str
+    # meta["available_from_round"] (int, default 0): the evidence only exists from that
+    # discovery round on (e.g. a Slack message reversing an earlier decision).
     meta: dict[str, Any] = {}
 
 
@@ -60,7 +62,10 @@ class Customer(BaseModel):
     record_schema: dict[str, str]  # field path -> description shown in source profiles
     manifest: list[SourceEntry]
     signals: list[Signal]
-    oracle: dict[str, str]  # keyword -> answer, for targeted questions
+    # keyword -> answer for targeted questions. An answer may change over discovery
+    # rounds (confident-wrong then corrected): give a list of
+    # {"from_round": int, "answer": str}; the latest entry with from_round <= round wins.
+    oracle: dict[str, str | list[dict[str, Any]]]
     cases: list[Case]
     history_labels: dict[str, Disposition]  # case_id -> label, for labeled history rows
     chunks: list[Chunk]

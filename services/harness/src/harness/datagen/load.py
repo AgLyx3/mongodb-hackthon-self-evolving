@@ -54,14 +54,17 @@ async def load_customer(c: Customer) -> None:
             for ch in qc])
     await db["evidence"].insert_many([
         {"customer": c.customer, "source_id": ch.source_id, "kind": ch.kind, "text": ch.text,
-         "meta": ch.meta} for ch in c.chunks])
+         "avail_round": int(ch.meta.get("available_from_round", 0)), "meta": ch.meta}
+        for ch in c.chunks])
 
     await ev["answer_key"].insert_many(
         [{"customer": c.customer, "aux": False, **s.model_dump(mode="json")} for s in c.signals]
         + [{"customer": c.customer, "aux": True, **s.model_dump(mode="json")}
            for s in c.aux_facts])
     await ev["oracle"].insert_many([
-        {"customer": c.customer, "keyword": k, "answer": v} for k, v in c.oracle.items()])
+        {"customer": c.customer, "keyword": k,
+         "answers": [{"from_round": 0, "answer": v}] if isinstance(v, str) else v}
+        for k, v in c.oracle.items()])
 
 
 async def main(names: list[str]) -> None:
