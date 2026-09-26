@@ -7,7 +7,11 @@
       "Read(./**/.env)",
       "Read(./**/.env.*)",
       "Read(./**/*credentials*.json)",
-      "Read(./**/*.pem)"
+      "Read(./**/*.pem)",
+      "Read(./services/harness/src/harness/datagen/heldout/**)",
+      "Edit(./services/harness/src/harness/datagen/heldout/**)",
+      "Write(./services/harness/src/harness/datagen/heldout/**)",
+      "Read(./services/harness/tests/heldout/**)"
     ],
     "ask": [
       "Bash(git push:*)",

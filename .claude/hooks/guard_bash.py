@@ -18,6 +18,17 @@ if SECRET_FILE.search(command):
     print("Blocked: this command touches a .env file. Secrets stay out of the context window; ask the user instead.", file=sys.stderr)
     sys.exit(2)
 
+# Eval separation (CLAUDE.md): the builder must not read held-out eval code or data.
+# Running the frozen loop/metrics on a held-out customer is allowed (it scores
+# against the answer key without printing it); inspecting it is not.
+HELDOUT = re.compile(r"datagen/heldout|heldout_\w*")
+INSPECT = re.compile(r"\b(cat|less|more|head|tail|sed|awk|grep|rg|find|ls|cp|mv|vi|vim|nano|"
+                     r"open|strings|xxd)\b|python3?\s+-c\b|python3?\s+-(\s|$)|<<|eval_db|fde_eval")
+if HELDOUT.search(command) and INSPECT.search(command):
+    print("Blocked: held-out eval code/data is off-limits to the builder (eval separation). "
+          "Run the frozen loop or metrics scripts instead, or ask the user.", file=sys.stderr)
+    sys.exit(2)
+
 if re.search(r"\bgit\b[^;&|]*\bcommit\b", command):
     branch = subprocess.run(
         ["git", "branch", "--show-current"], capture_output=True, text=True, cwd=payload.get("cwd")

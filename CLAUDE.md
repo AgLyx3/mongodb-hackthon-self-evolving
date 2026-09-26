@@ -4,10 +4,23 @@
 forward-deployed engineers (FDEs). The agent runs customer tasks, turns
 recurring failures into **proposed, versioned changes to its own harness**
 (prompts, skills, tools, control hooks), automated gates screen them, and a
-human FDE accepts, edits, or rejects each one. The key metric is **change
-survival**: accepted changes that stay live and aren't reverted. MongoDB Atlas
-holds the versions, traces, evals, decisions, and memory. <!-- TODO: name the
-concrete customer task the demo runs. -->
+human FDE accepts, edits, or rejects each one. MongoDB Atlas holds the versions,
+traces, evals, decisions, and memory. Demo task: compliance alert triage
+(`close_false_positive | request_info | escalate`) for synthetic customers.
+
+Two metrics, kept distinct:
+- **Survival:** an accepted change stays live, holds on evidence the proposer
+  never saw, and breaks no backtest cases.
+- **Feedback uptake** (or lesson survival): after the FDE corrects something
+  once, a later, similar case (same hidden task family) no longer needs that
+  correction. Content corrections become playbook units; presentation
+  corrections stay in proposer/investigator memory and never reach the
+  triage runtime.
+
+**Eval separation:** the builder agent does not author the held-out eval.
+Held-out customers live in `services/harness/src/harness/datagen/heldout/`
+(written by a separate agent) and in `fde_eval` under `heldout_*` customer ids.
+The builder scores against the answer-key schema and does not read the values.
 
 Research behind the design is in `research/notes/`. The rules distilled from
 it are in `.claude/rules/harness-evolution.md`.

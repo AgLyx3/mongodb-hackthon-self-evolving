@@ -17,6 +17,10 @@ from harness.datagen.spec import Customer
 
 
 def naive_base(customer: str, record: dict[str, Any]) -> Disposition:
+    if customer not in ("bank", "fintech"):
+        from harness.datagen.registry import module_for
+
+        return module_for(customer).naive_base(record)  # type: ignore[no-any-return]
     if customer == "bank":
         t, a, al = record["txn"], record["account"], record["alert"]
         if a["kyc_status"] == "incomplete":

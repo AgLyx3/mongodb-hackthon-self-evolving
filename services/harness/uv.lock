@@ -547,6 +547,7 @@ source = { editable = "." }
 dependencies = [
     { name = "deepagents" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "langchain-openrouter" },
     { name = "langgraph" },
     { name = "langgraph-checkpoint-mongodb" },
@@ -570,6 +571,7 @@ dev = [
 requires-dist = [
     { name = "deepagents", specifier = "==0.7.19" },
     { name = "fastapi", specifier = ">=0.141.1" },
+    { name = "httpx", specifier = ">=0.28" },
     { name = "langchain-openrouter", specifier = ">=0.2.9" },
     { name = "langgraph", specifier = ">=1.2.12" },
     { name = "langgraph-checkpoint-mongodb", specifier = ">=0.5.0" },

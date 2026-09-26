@@ -1,0 +1,7 @@
+2	cat services/harness/src/harness/datagen/heldout/x.py
+0	uv run python -m harness.evolution.loop heldout_acme
+2	uv run python -c 'from harness.adapters.mongo.client import eval_db' heldout_acme
+0	uv run python scripts/final_compare.py heldout_acme
+2	uv run python - <<EOF heldout_x
+2	grep -r signal services/harness/src/harness/datagen/heldout
+0	cat services/harness/src/harness/datagen/bank.py

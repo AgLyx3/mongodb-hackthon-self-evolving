@@ -8,15 +8,13 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from harness.adapters.mongo import views
+from harness.datagen.registry import is_known
 
 app = FastAPI(title="Self-evolving FDE harness")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000"],
                    allow_methods=["GET"], allow_headers=["*"])
-CUSTOMERS = {"bank", "fintech"}
-
-
 def _check(customer: str) -> None:
-    if customer not in CUSTOMERS:
+    if not is_known(customer):
         raise HTTPException(status_code=404, detail="unknown customer")
 
 

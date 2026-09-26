@@ -14,7 +14,7 @@ import asyncio
 
 from harness.adapters.mongo.client import app_db, eval_db
 from harness.adapters.mongo.indexes import EVIDENCE_INDEX, ensure_indexes, wait_queryable
-from harness.datagen import bank, fintech
+from harness.datagen.registry import module_for
 from harness.datagen.spec import Customer
 
 
@@ -40,12 +40,12 @@ async def load_customer(c: Customer) -> None:
         {"_id": x.case_id, "customer": c.customer, "split": x.split, "label": x.label,
          "case_type": x.case_type} for x in c.cases])
 
-    if c.customer == "fintech":
-        # Fintech history comes with outcomes (quantitative labels, no comments).
+    qc = [ch for ch in c.chunks if ch.source_id == "qc_sheet"]
+    if not qc and c.history_labels:
+        # No QC sheet: history labels are observed outcomes (quantitative, no comments).
         await db["outcomes"].insert_many([
             {"customer": c.customer, "case_id": cid, "label": lab, "source": "history_outcome",
              "batch": 0} for cid, lab in c.history_labels.items()])
-    qc = [ch for ch in c.chunks if ch.source_id == "qc_sheet"]
     if qc:
         await db["qc_sheet"].insert_many([
             {"customer": c.customer, "case_id": ch.meta["case_id"],
@@ -64,9 +64,9 @@ async def load_customer(c: Customer) -> None:
         {"customer": c.customer, "keyword": k, "answer": v} for k, v in c.oracle.items()])
 
 
-async def main() -> None:
+async def main(names: list[str]) -> None:
     await ensure_indexes()
-    for c in (bank.build(), fintech.build()):
+    for c in (module_for(n).build() for n in names):
         await load_customer(c)
         print(f"loaded {c.customer}: {len(c.cases)} cases, {len(c.chunks)} chunks")
     ok = await wait_queryable("evidence", EVIDENCE_INDEX)
@@ -74,4 +74,6 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    import sys
+
+    asyncio.run(main(sys.argv[1:] or ["bank", "fintech"]))

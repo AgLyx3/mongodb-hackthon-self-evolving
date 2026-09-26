@@ -25,6 +25,9 @@ class Signal(BaseModel):
     meaning_keywords: tuple[str, ...] = ()  # definitions: what a correct meaning mentions
     locations: tuple[str, ...]  # source ids where the evidence lives
     signal_type: str  # e.g. "qc_pattern", "interview_remark", "cryptic_code"
+    # Hidden task family for the feedback-uptake eval: siblings share a family and
+    # appear in different discovery rounds. Never shown to the agent.
+    family: str | None = None
 
 
 class SourceEntry(BaseModel):
