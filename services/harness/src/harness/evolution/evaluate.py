@@ -16,6 +16,9 @@ from harness.adapters.runtime.triage import triage
 from harness.core.units import Unit, make_version
 
 
+PRIVATE_SPLITS = ("holdout", "report")
+
+
 @dataclass
 class CaseResult:
     case_id: str
@@ -49,21 +52,31 @@ async def run_eval(
 
     async def one(c: dict[str, Any]) -> CaseResult:
         lab = labels[c["_id"]]
-        try:
-            res, cost, _hit = await triage(units, c["record"], gl, model=model, rep=rep)
-            pred, applied = res.disposition, res.applied_unit_ids
-        except LlmFailure:
-            pred, applied, cost = None, [], 0.0
+        pred, applied, cost = None, [], 0.0
+        for attempt in range(2):  # one retry: infra/format failures are not the harness
+            try:
+                res, cost, _hit = await triage(units, c["record"], gl, model=model, rep=rep)
+                pred, applied = res.disposition, res.applied_unit_ids
+                break
+            except LlmFailure:
+                continue
         return CaseResult(case_id=c["_id"], predicted=pred, label=lab["label"],
                           correct=pred == lab["label"], applied=applied, cost=cost,
                           case_type=lab["case_type"])
 
     results = await asyncio.gather(*(one(c) for c in cases))
-    if results:
-        await app_db()["traces"].insert_many([
-            {"customer": customer, "version": version, "model": model, "rep": rep, "tag": tag,
+    # Traces for holdout/report cases go to fde_eval: with `correct` (or even just the
+    # prediction across reps) they would leak labels to anyone with the proposer's FIND.
+    private = {c["_id"] for c in cases if c.get("split") in PRIVATE_SPLITS}
+    docs = [{"customer": customer, "version": version, "model": model, "rep": rep, "tag": tag,
              "case_id": r.case_id, "predicted": r.predicted, "correct": r.correct,
-             "applied": r.applied, "cost": r.cost} for r in results])
+             "applied": r.applied, "cost": r.cost} for r in results]
+    pub = [d for d in docs if d["case_id"] not in private]
+    prv = [d for d in docs if d["case_id"] in private]
+    if pub:
+        await app_db()["traces"].insert_many(pub)
+    if prv:
+        await eval_db()["traces_private"].insert_many(prv)
     return list(results)
 
 

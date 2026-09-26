@@ -12,11 +12,15 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from harness.core.conditions import holds
 from harness.core.kernel import KernelError, Proposal, validate_proposal
 from harness.core.units import NoOpChange, Unit, apply_change
 from harness.evolution.evaluate import CaseResult, run_eval
 
 CASE_ID = re.compile(r"\b(NB-A\d+|zw_tx_\d+)\b")
+OVERRIDE = re.compile(r"\b(ignore|override|bypass|disregard)\b.{0,40}\b(guardrail|kyc|due.diligence|"
+                      r"harness|instruction|rule)s?\b", re.IGNORECASE)
+KYC_FIELDS = ("kyc", "due_diligence")
 
 
 @dataclass
@@ -52,10 +56,19 @@ def static_checks(p: Proposal, live: list[Unit], glossary: dict[str, str]) -> st
             return f"validity: definition field {u.field!r} not in the record schema"
         if CASE_ID.search(f"{u.title} {u.text}"):
             return "lint: unit text hard-codes a case id"
+        if OVERRIDE.search(f"{u.title} {u.text}"):
+            return "lint: unit text tries to override guardrails or instructions"
+        if (u.kind == "rule" and u.applies_when is not None and u.disposition != "request_info"
+                and any(k in c.path for c in u.applies_when.all_of for k in KYC_FIELDS)):
+            return "lint: a rule on KYC status may not change the KYC guardrail outcome"
     try:
         apply_change(live, u, p.change.retire_hash)
     except NoOpChange:
         return "validity: no-op change"
+    if u is not None:
+        live_ids = {x.unit_id: x for x in live}
+        if u.unit_id in live_ids and live_ids[u.unit_id].content_hash != p.change.retire_hash:
+            return f"validity: unit id {u.unit_id} is already live; supersede it instead"
     return None
 
 
@@ -78,15 +91,25 @@ async def backtest(
     hold_ids = [c["_id"] for c in holdout_cases]
     rep_ids = [c["_id"] for c in replay_cases]
 
+    def ok(i: str) -> bool:
+        # Infra/format failures on either side are excluded, never blamed on the harness.
+        return by[i].predicted is not None and incumbent[i].predicted is not None
+
     def delta(ids: list[str]) -> tuple[list[str], list[str]]:
-        fixed = [i for i in ids if by[i].correct and not incumbent[i].correct]
-        broken = [i for i in ids if not by[i].correct and incumbent[i].correct]
+        fixed = [i for i in ids if ok(i) and by[i].correct and not incumbent[i].correct]
+        broken = [i for i in ids if ok(i) and not by[i].correct and incumbent[i].correct]
         return fixed, broken
 
     h_fixed, h_broken = delta(hold_ids)
     r_fixed, r_broken = delta(rep_ids)
-    new_id = candidate_add.unit_id if candidate_add else None
-    activations = sum(new_id in r.applied for r in res) if new_id else len(r_fixed + h_fixed)
+    # Activation is computed by the kernel, not taken from the model's self-report:
+    # a rule fires on a case when its condition holds there AND the decision changed.
+    records = {c["_id"]: c["record"] for c in replay_cases + holdout_cases}
+    changed = [i for i in hold_ids + rep_ids if ok(i) and by[i].predicted != incumbent[i].predicted]
+    if candidate_add is not None and candidate_add.applies_when is not None:
+        activations = sum(holds(records[i], candidate_add.applies_when) for i in changed)
+    else:
+        activations = len(changed)
     rep = GateReport(
         passed=False, failed_gate=None, detail="", candidate_units=cand_units,
         holdout_acc=sum(by[i].correct for i in hold_ids) / len(hold_ids),
@@ -95,7 +118,8 @@ async def backtest(
         replay_broken=r_broken, activations=activations, candidate_results=res)
     threshold = max(2, noise_cases + 1)
     if candidate_add is not None and activations == 0:
-        rep.failed_gate, rep.detail = "activation", "the new unit never fired in the backtest"
+        rep.failed_gate = "activation"
+        rep.detail = "the change never altered a decision where it applies"
     elif rep.holdout_net < threshold:
         rep.failed_gate = "significance"
         rep.detail = (f"holdout net {rep.holdout_net:+d} cases, needs >= +{threshold} "

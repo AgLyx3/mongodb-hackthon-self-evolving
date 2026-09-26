@@ -100,8 +100,19 @@ def decide(proposal: Proposal, live: list[Unit], key: list[KeySignal],
            records: list[dict[str, Any]]) -> tuple[FdeDecision, str | None]:
     """Return the FDE decision and the matched signal id (None if unmatched)."""
     ch = proposal.change
-    if ch.add is not None:
+    target = (next((u for u in live if u.content_hash == ch.retire_hash), None)
+              if ch.retire_hash else None)
+    if ch.retire_hash is not None and (target is None or target.origin == "base"):
+        j = Judgment("reject", "unsafe", None, None, "won't retire base policy")
+    elif ch.add is not None:
         j = judge_unit(ch.add, key, records)
+        if target is not None and j.action in ("accept", "edit"):
+            tj = judge_unit(target, key, records)
+            # Superseding is fine when it refines the same signal; replacing a correct
+            # rule for a different signal would silently delete known truth.
+            if tj.action == "accept" and tj.signal_id != j.signal_id:
+                j = Judgment("reject", "wrong", tj.signal_id, None,
+                             "that would remove a rule we know is right")
         # A duplicate of a signal already covered by a live unit is rejected.
         if j.action in ("accept", "edit") and j.signal_id is not None:
             for u in live:
@@ -112,10 +123,8 @@ def decide(proposal: Proposal, live: list[Unit], key: list[KeySignal],
                                      "already covered by a live rule")
                         break
     else:
-        target = next((u for u in live if u.content_hash == ch.retire_hash), None)
-        if target is None or target.origin == "base":
-            j = Judgment("reject", "unsafe", None, None, "won't retire base policy")
-        else:
+        assert target is not None
+        if True:
             tj = judge_unit(target, key, records)
             j = (Judgment("accept", "correct", None, None, "agree, that rule was wrong")
                  if tj.action != "accept"

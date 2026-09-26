@@ -121,7 +121,18 @@ export type Harness = {
   units: (UnitDoc & { hash: string; scope: string | null; origin: string })[];
 };
 
+export type ComparisonRow = {
+  harness: string;
+  role: string;
+  model: string;
+  acc: number;
+  signal_acc: number;
+  failed_calls: number;
+};
+export type Comparison = { rows: ComparisonRow[]; at?: string };
+
 export const api = {
+  comparison: (c: string) => get<Comparison>(`/api/customers/${c}/comparison`),
   customers: () => get<Customer[]>("/api/customers"),
   timeline: (c: string) => get<Timeline>(`/api/customers/${c}/timeline`),
   proposals: (c: string) => get<Proposal[]>(`/api/customers/${c}/proposals`),

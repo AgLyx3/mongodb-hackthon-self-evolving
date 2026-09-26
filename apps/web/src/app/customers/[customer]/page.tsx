@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { api } from "@/lib/api";
 import { AccuracyChart } from "./AccuracyChart";
+import { ComparisonTable } from "./ComparisonTable";
 import { Kpis } from "./Kpis";
 import { ProposalList } from "./ProposalList";
 import { Section } from "./Section";
@@ -14,15 +15,16 @@ export default async function CustomerPage({ params }: { params: Promise<{ custo
   if (customer !== "bank" && customer !== "fintech") notFound();
   let data;
   try {
-    const [customers, timeline, proposals, sources, metrics, harness] = await Promise.all([
+    const [customers, timeline, proposals, sources, metrics, harness, comparison] = await Promise.all([
       api.customers(),
       api.timeline(customer),
       api.proposals(customer),
       api.sources(customer),
       api.metrics(customer),
       api.harness(customer),
+      api.comparison(customer),
     ]);
-    data = { customers, timeline, proposals, sources, metrics, harness };
+    data = { customers, timeline, proposals, sources, metrics, harness, comparison };
   } catch {
     return (
       <p>
@@ -62,6 +64,13 @@ export default async function CustomerPage({ params }: { params: Promise<{ custo
         caption={`Shaded: noise band (±${noisePts.toFixed(1)} pts from 3 re-runs of the unchanged harness). Dashed: a strong model on the base harness.`}
       >
         <AccuracyChart points={points} noisePts={noisePts} strongBaseline={strong} />
+      </Section>
+
+      <Section
+        title="Model × harness on the holdout"
+        caption="Does an evolved harness let a cheap model match a strong one? And does a harness evolved on one model's trajectories carry over to another?"
+      >
+        <ComparisonTable comparison={data.comparison} />
       </Section>
 
       <Section

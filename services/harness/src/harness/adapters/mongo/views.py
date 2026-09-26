@@ -7,7 +7,12 @@ from typing import Any
 
 from harness.adapters.mongo.client import app_db, eval_db
 from harness.adapters.mongo.store import load_units
+from harness.config import get_settings
 from harness.core.units import render_harness
+
+
+def _ptr_id(customer: str) -> str:
+    return f"{customer}|{get_settings().runtime_model}"
 
 
 def _clean(d: dict[str, Any]) -> dict[str, Any]:
@@ -25,7 +30,7 @@ async def customers() -> list[dict[str, Any]]:
     async for c in app_db()["customers"].find({}):
         c = _clean(c)
         relevance = {s["source_id"]: s for s in c["manifest"]}
-        ptr = await app_db()["live_pointers"].find_one({"customer": c["id"]})
+        ptr = await app_db()["live_pointers"].find_one({"_id": _ptr_id(c["id"])})
         c["live_version"] = ptr["version"] if ptr else None
         c["manifest"] = list(relevance.values())
         out.append(c)
@@ -33,28 +38,23 @@ async def customers() -> list[dict[str, Any]]:
 
 
 async def timeline(customer: str) -> dict[str, Any]:
-    db = app_db()
-    reports = [_clean(r) async for r in db["batch_reports"].find(
+    db, ev = app_db(), eval_db()
+    reports = [_clean(r) async for r in ev["batch_reports"].find(
         {"customer": customer}).sort("batch", 1)]
     events = [_clean(e) async for e in db["pointer_events"].find(
         {"customer": customer}).sort("at", 1)]
+    scores = {r["version"]: r["acc"] async for r in ev["report_scores"].find(
+        {"customer": customer})}
     versions = []
     for e in events:
-        v = await db["harness_versions"].find_one({"_id": e["to"]})
-        acc = await db["gate_results"].find_one(
-            {"proposal_id": e.get("proposal_id"), "gate": {"$in": ["backtest",
-                                                                   "backtest_fde_edit"]},
-             "passed": True}, sort=[("at", -1)])
         dec = await db["fde_decisions"].find_one({"proposal_id": e.get("proposal_id")})
         versions.append({
             "version": e["to"], "parent": e["from"], "batch": e["batch"], "reason": e["reason"],
-            "edge": v["edge"] if v else None, "proposal_id": e.get("proposal_id"),
-            "holdout_acc": acc["holdout_acc"] if acc else None,
+            "edge": e.get("edge"), "proposal_id": e.get("proposal_id"),
+            "holdout_acc": scores.get(e["to"]),
             "unit_id": dec.get("promoted_unit_id") if dec else None,
             "fde_action": dec.get("action") if dec else None, "at": e["at"]})
     noise = reports[0] if reports else {}
-    if versions and noise:
-        versions[0]["holdout_acc"] = noise.get("holdout_acc")
     return {"versions": versions, "reports": reports,
             "noise_cases": noise.get("noise_cases"), "noise_accs": noise.get("noise_accs")}
 
@@ -62,7 +62,7 @@ async def timeline(customer: str) -> dict[str, Any]:
 async def harness(customer: str, version: str | None) -> dict[str, Any]:
     db = app_db()
     if version is None:
-        ptr = await db["live_pointers"].find_one({"customer": customer})
+        ptr = await db["live_pointers"].find_one({"_id": _ptr_id(customer)})
         version = ptr["version"] if ptr else None
     if version is None:
         return {"version": None, "units": [], "rendered": ""}
@@ -80,14 +80,20 @@ async def proposals(customer: str) -> list[dict[str, Any]]:
         p = _clean(p)
         gates = [_clean(g) async for g in db["gate_results"].find(
             {"proposal_id": p["id"]}).sort("at", 1)]
+        priv = {(g["gate"], str(g["at"])[:19]): g async for g in eval_db()["gate_private"].find(
+            {"proposal_id": p["id"]})}
+        for g in gates:
+            extra = priv.get((g["gate"], g["at"][:19]))
+            if extra and extra.get("detail"):
+                g["detail"] = extra["detail"]
         dec = await db["fde_decisions"].find_one({"proposal_id": p["id"]})
+        match = await eval_db()["fde_matches"].find_one({"proposal_id": p["id"]})
         p["gates"] = gates
         p["fde"] = _clean(dec) if dec else None
         summary = next((g for g in gates if g["gate"] == "summary"), None)
         p["outcome"] = summary["detail"] if summary else "pending"
         p["promoted"] = bool(dec and dec.get("promoted"))
-        p["matched_signal"] = (dec or {}).get("matched_signal") or (summary or {}).get(
-            "matched_signal")
+        p["matched_signal"] = match["signal"] if match else None
         out.append(p)
     return out
 
@@ -104,7 +110,8 @@ async def sources(customer: str) -> dict[str, Any]:
     async for s in eval_db()["answer_key"].find({"customer": customer}):
         for loc in s["locations"]:
             relevance[loc] = True
-    reports = [r async for r in db["batch_reports"].find({"customer": customer}).sort("batch", 1)]
+    reports = [r async for r in eval_db()["batch_reports"].find(
+        {"customer": customer}).sort("batch", 1)]
     return {
         "probes": {t: {s: dict(c) for s, c in v.items()} for t, v in probes.items()},
         "usefulness_by_batch": [{"batch": r["batch"], "usefulness": r.get("usefulness_after", {})}
@@ -118,38 +125,41 @@ async def metrics(customer: str) -> dict[str, Any]:
     key = [s async for s in ev["answer_key"].find({"customer": customer, "aux": False})]
     decs = [d async for d in db["fde_decisions"].find({"customer": customer})]
     promoted = [d for d in decs if d.get("promoted")]
-    ptr = await db["live_pointers"].find_one({"customer": customer})
-    live = set((await db["harness_versions"].find_one({"_id": ptr["version"]}))["unit_hashes"]) \
-        if ptr else set()
+    ptr = await db["live_pointers"].find_one({"_id": _ptr_id(customer)})
+    v = await db["harness_versions"].find_one({"_id": ptr["version"]}) if ptr else None
+    live = set(v["unit_hashes"]) if v else set()
+    matches = {m["proposal_id"]: m["signal"] async for m in ev["fde_matches"].find(
+        {"customer": customer})}
     survived = [d for d in promoted if d.get("promoted_unit_hash") in live]
-    found = sorted({d["matched_signal"] for d in promoted if d.get("matched_signal")})
     planted = [s["signal_id"] for s in key]
-    by_batch: dict[int, list[float]] = defaultdict(list)
+    # A signal counts as learned only if a unit for it is live now.
+    found = sorted({matches.get(d["proposal_id"]) for d in survived} & set(planted))
+    edits: dict[int, list[float]] = defaultdict(list)
     for d in decs:
-        by_batch[d["batch"]].append(d.get("edit_distance", 0.0))
-    reports = [r async for r in db["batch_reports"].find({"customer": customer}).sort("batch", 1)]
-    decoy = await _decoy_spend(customer)
+        if d["action"] == "edit":
+            edits[d["batch"]].append(d.get("edit_distance", 0.0))
+    reports = [r async for r in ev["batch_reports"].find({"customer": customer}).sort("batch", 1)]
     n_props = await db["proposals"].count_documents({"customer": customer})
     gate_fail = await db["gate_results"].count_documents(
         {"customer": customer, "gate": "summary", "passed": False})
     spend = await db["llm_spend"].find_one({"_id": "ledger"})
-    from harness.config import get_settings  # local: views stay import-light
-    strong = [t["correct"] async for t in db["traces"].find(
-        {"customer": customer, "tag": "calibration", "model": get_settings().strong_model},
-        {"correct": 1})]
+    comp = await db["comparisons"].find_one({"_id": customer})
+    strong = next((r["acc"] for r in (comp or {}).get("rows", [])
+                   if r["harness"] == "base" and r["role"] == "strong"), None)
     return {
-        "strong_baseline": (sum(strong) / len(strong)) if strong else None,
+        "strong_baseline": strong,
         "planted_signals": planted, "signals_learned": found,
-        "signal_recall": len([s for s in found if s in planted]) / len(planted) if planted else 0,
-        "holdout_by_batch": [{"batch": r["batch"], "acc": r["holdout_acc"]} for r in reports],
+        "signal_recall": len(found) / len(planted) if planted else 0,
+        "holdout_by_batch": [{"batch": r["batch"], "acc": r.get("report_acc")}
+                             for r in reports if r.get("report_acc") is not None],
         "noise_cases": reports[0].get("noise_cases") if reports else None,
         "proposals": n_props, "promoted": len(promoted), "survived": len(survived),
         "stopped_or_rejected": gate_fail,
         "fde_actions": dict(Counter(d["action"] for d in decs)),
         "fde_reasons": dict(Counter(d["reason_tag"] for d in decs)),
-        "edit_distance_by_batch": {str(b): round(sum(v) / len(v), 3)
-                                   for b, v in sorted(by_batch.items())},
-        "decoy_spend": decoy,
+        "edit_distance_by_batch": {str(b): round(sum(x) / len(x), 3)
+                                   for b, x in sorted(edits.items())},
+        "decoy_spend": await _decoy_spend(customer),
         "spent_usd_total": round(float(spend["usd"]), 3) if spend else 0.0,
     }
 
@@ -170,3 +180,8 @@ async def _decoy_spend(customer: str) -> dict[str, Any]:
                 o["irrelevant"] += share
     return {k: {**v, "irrelevant_share": round(v["irrelevant"] / v["total"], 3)
                 if v["total"] else 0.0} for k, v in sorted(out.items())}
+
+
+async def comparison(customer: str) -> dict[str, Any]:
+    doc = await app_db()["comparisons"].find_one({"_id": customer})
+    return _clean(doc) if doc else {"rows": []}

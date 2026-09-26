@@ -53,6 +53,12 @@ class KernelError(Exception):
     pass
 
 
+def check_revert(customer: str, target: HarnessVersion) -> None:
+    """An FDE revert may only point a customer's pointer at that customer's version."""
+    if target.customer != customer:
+        raise KernelError("cannot revert to another customer's version")
+
+
 def unit_edit_distance(proposed: Unit | None, final: Unit | None) -> float:
     if proposed is None or final is None:
         return 0.0 if proposed == final else 1.0
@@ -78,6 +84,8 @@ def validate_proposal(p: Proposal, current: list[Unit]) -> None:
             raise KernelError("retire target is not live")
         if target.layer == "anchor":
             raise KernelError("proposals may not retire anchor-layer units")
+        if target.origin == "base":
+            raise KernelError("proposals may not retire or supersede base-policy units")
 
 
 def promote(

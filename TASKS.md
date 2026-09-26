@@ -1,13 +1,21 @@
-# TASKS.md: Day-1 build plan (DRAFT, awaiting approval)
+# TASKS.md: Day-1 build plan (approved 2026-09-26 ~12:40; in progress)
 
 **Goal:** a working loop for compliance alert triage across two customers: bank (dev) and fintech (held-out). Show it improves beyond noise and learns where to look. Submissions are due **22:00 EDT**. Design: `RESEARCH.md` §5.9 (decisions 1–11). Solo; $10 OpenRouter (hard stop at $9).
 
 Layout: `services/harness/` (Python 3.12, uv, FastAPI) + `apps/web/` (Next.js, pnpm), matching the `.claude/rules` path globs.
 
 ## Blocked on user
-- [ ] Create `.env` from `.env.example` (Atlas URIs for `fde_app` / `fde_proposer`, `OPENROUTER_API_KEY`)
-- [ ] Approve dependencies (listed under Phase 0)
-- [ ] Approve installing `pnpm` (not on this machine), or use npm for the web app instead
+- (none)
+
+## Status (updated during the build)
+- Phase 0 ✅ · Phase 1 ✅ · Phase 2 ✅ (kernel tests) · Phase 3 ✅ (calibration) · Phases 4–7 ✅ first bank run in progress · Phase 8 ✅ first version of the console
+- Deviations from plan (reported to the user):
+  - The triage runtime is a lean structured LLM call, not Deep Agents (token cost).
+  - The investigator is a small custom tool loop (the langchain-openrouter async path hung).
+  - The OpenRouter client uses httpx directly.
+  - Qualitative text is templated, not LLM-generated ($0, deterministic).
+  - Fintech "cents" signal replaced with the "H = Home" code: the cents trap collided with other signals, so the backtest would have rejected true knowledge.
+  - Answer key, labels, and oracle moved to a separate `fde_eval` DB the proposer cannot read.
 
 ## Checkpoints (cut scope if missed)
 | Time | Must be true | If behind |
@@ -109,4 +117,10 @@ Layout: `services/harness/` (Python 3.12, uv, FastAPI) + `apps/web/` (Next.js, p
 See `RESEARCH.md` §5.9 decision log (1–11). The dev rule `harness-evolution.md` was updated per user approval (no auto-rollback; same-customer recall; case-only triage + calibration).
 
 ## Verification results
-(none yet)
+- Atlas: both DB users connect. The proposer can insert into `proposals` and is refused (code 13) on harness_versions, live_pointers, other collections, and updates.
+- Calibration (holdout 40, base harness), planted-signal cases:
+  - bank: mid-tier 0%, strong (claude-sonnet-5) 0%; base cases 100% for both.
+  - fintech: mid-tier 0%, strong 0%.
+- Noise band (bank, K=3, temp 0): 0 flipped cases; acc 40/40/40%.
+- Bank batch 1: holdout 40% → 77.5%. 3 promotions (2 accept, 1 FDE narrowing edit on rolling_30d). 3 of 5 signals learned.
+- pytest: 34 passed.

@@ -64,3 +64,60 @@ def test_duplicate_of_live_rule_is_rejected():
                  hypothesis="h", falsification_criterion="f")
     d, _ = decide(p, live, [SIG], RECORDS)
     assert (d.action, d.reason_tag) == ("reject", "duplicate")
+
+
+def test_weak_overlap_is_rejected_not_edited_into_the_signal():
+    # SIG = x>=5 & y==1 (5 cases). Partial overlap, neither sub- nor superset:
+    # x<=5 & y<=1 -> 12 cases, overlap 1, union 16, Jaccard 0.06 -> reject, don't invent.
+    j = judge_unit(_rule(("a.x", "<=", 5), ("a.y", "<=", 1)), [SIG], RECORDS)
+    assert (j.action, j.final_unit) == ("reject", None)
+
+
+def test_too_narrow_edit_uses_the_signal_scope():
+    j = judge_unit(_rule(("a.x", ">=", 8), ("a.y", "==", 1)), [SIG], RECORDS)
+    assert j.final_unit is not None and j.final_unit.applies_when == SIG.condition
+
+
+def _prop(change: Change) -> Proposal:
+    return Proposal(proposal_id="p", customer="c", batch=1, parent_version="v", change=change,
+                    hypothesis="h", falsification_criterion="f")
+
+
+def test_superseding_the_rule_that_covers_a_signal_is_not_a_duplicate():
+    live = [_rule(("a.x", ">=", 5))]  # too broad, but covers s1
+    narrowed = _rule(("a.x", ">=", 5), ("a.y", "==", 1))
+    d, sig = decide(_prop(Change(add=narrowed, retire_hash=live[0].content_hash)), live,
+                    [SIG], RECORDS)
+    assert (d.action, sig) == ("accept", "s1")
+
+
+def test_retire_branch():
+    good = _rule(("a.x", ">=", 5), ("a.y", "==", 1))
+    wrong = _rule(("a.x", "<", 2), ("a.y", "==", 0))
+    base = good.model_copy(update={"origin": "base", "unit_id": "base.x"})
+    d_wrong, _ = decide(_prop(Change(retire_hash=wrong.content_hash)), [good, wrong], [SIG],
+                        RECORDS)
+    d_good, _ = decide(_prop(Change(retire_hash=good.content_hash)), [good, wrong], [SIG],
+                       RECORDS)
+    d_base, _ = decide(_prop(Change(retire_hash=base.content_hash)), [base], [SIG], RECORDS)
+    assert d_wrong.action == "accept"
+    assert (d_good.action, d_good.reason_tag) == ("reject", "wrong")
+    assert (d_base.action, d_base.reason_tag) == ("reject", "unsafe")
+
+
+def test_supersede_cannot_replace_a_correct_rule_for_another_signal():
+    sig2 = KeySignal(signal_id="s2", kind="rule",
+                     condition=Condition(all_of=(Clause(path="a.x", op="<", value=2),
+                                                 Clause(path="a.y", op="==", value=0))),
+                     disposition="close_false_positive", field=None, meaning_keywords=(),
+                     description="d2")
+    correct_s1 = _rule(("a.x", ">=", 5), ("a.y", "==", 1))
+    for_s2 = _rule(("a.x", "<", 2), ("a.y", "==", 0), disp="close_false_positive")
+    d, _ = decide(_prop(Change(add=for_s2, retire_hash=correct_s1.content_hash)),
+                  [correct_s1], [SIG, sig2], RECORDS)
+    assert (d.action, d.reason_tag) == ("reject", "wrong")
+
+
+def test_decide_records_edit_distance_for_edits():
+    d, _ = decide(_prop(Change(add=_rule(("a.x", ">=", 5)))), [], [SIG], RECORDS)
+    assert d.action == "edit" and 0 < d.edit_distance < 1

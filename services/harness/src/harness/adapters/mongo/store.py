@@ -53,7 +53,8 @@ async def live_version(customer: str, model: str) -> str | None:
 
 
 async def set_live(customer: str, model: str, version_hash: str, *, reason: str,
-                   proposal_id: str | None = None, batch: int = 0) -> None:
+                   proposal_id: str | None = None, batch: int = 0,
+                   edge: str = "base") -> None:
     db = app_db()
     prev = await live_version(customer, model)
     await db["live_pointers"].update_one(
@@ -62,7 +63,20 @@ async def set_live(customer: str, model: str, version_hash: str, *, reason: str,
                   "updated_at": _now()}}, upsert=True)
     await db["pointer_events"].insert_one({
         "customer": customer, "model": model, "from": prev, "to": version_hash,
-        "reason": reason, "proposal_id": proposal_id, "batch": batch, "at": _now()})
+        # The edge lives on the (append-only) event, not the version: content can
+        # recur (a retire can recreate an earlier hash) and must not lose lineage.
+        "edge": edge, "reason": reason, "proposal_id": proposal_id, "batch": batch,
+        "at": _now()})
+
+
+async def revert(customer: str, model: str, to_version: str, *, reason: str,
+                 batch: int = 0) -> None:
+    """FDE revert: point the live pointer at an earlier version of this customer."""
+    from harness.core.kernel import check_revert
+
+    check_revert(customer, await load_version(to_version))
+    await set_live(customer, model, to_version, reason=f"fde_revert: {reason}", batch=batch,
+                   edge="reverts")
 
 
 async def reset_customer_run(customer: str) -> None:

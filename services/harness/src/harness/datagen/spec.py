@@ -47,7 +47,7 @@ class Case(BaseModel):
     record: dict[str, Any]
     label: Disposition
     case_type: str  # signal id or "base.*"; answer-key only
-    split: Literal["history", "batch1", "batch2", "batch3", "holdout"]
+    split: Literal["history", "batch1", "batch2", "batch3", "holdout", "report"]
 
 
 class Customer(BaseModel):

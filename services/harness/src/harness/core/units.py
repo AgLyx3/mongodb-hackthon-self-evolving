@@ -37,8 +37,21 @@ class Unit(BaseModel, frozen=True):
     @property
     def content_hash(self) -> str:
         payload = self.model_dump(mode="json", exclude={"origin"})
+        # Canonical form: clause order and 24 vs 24.0 must not change the hash, or a
+        # reordered rule would slip past no-op detection.
+        cond = payload.get("applies_when")
+        if cond:
+            cond["all_of"] = sorted(
+                ({**c, "value": _canon(c["value"])} for c in cond["all_of"]),
+                key=lambda c: (c["path"], c["op"], json.dumps(c["value"], sort_keys=True)))
         blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(blob.encode()).hexdigest()[:16]
+
+
+def _canon(v: object) -> object:
+    if isinstance(v, float) and v.is_integer():
+        return int(v)
+    return v
 
 
 class HarnessVersion(BaseModel, frozen=True):

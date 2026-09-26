@@ -55,3 +55,9 @@ async def sources(customer: str) -> dict[str, Any]:
 async def metrics(customer: str) -> dict[str, Any]:
     _check(customer)
     return await views.metrics(customer)
+
+
+@app.get("/api/customers/{customer}/comparison")
+async def comparison(customer: str) -> dict[str, Any]:
+    _check(customer)
+    return await views.comparison(customer)

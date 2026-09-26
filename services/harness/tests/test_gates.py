@@ -14,9 +14,11 @@ def _p(unit: Unit | None = None, retire: str | None = None) -> Proposal:
                     falsification_criterion="f")
 
 
-def _rule(path: str = "account.dormant_days", text: str = "escalate sleepers") -> Unit:
+def _rule(*paths: str, text: str = "escalate sleepers") -> Unit:
+    paths = paths or ("account.dormant_days",)
     return Unit(unit_id="bank.rule.x", kind="rule", layer="truth", title="x", text=text,
-                applies_when=Condition(all_of=(Clause(path=path, op=">=", value=180),)),
+                applies_when=Condition(all_of=tuple(Clause(path=p, op=">=", value=1)
+                                                    for p in paths)),
                 disposition="escalate", origin="proposal")
 
 
@@ -24,31 +26,62 @@ def test_valid_rule_passes():
     assert static_checks(_p(_rule()), LIVE, GLOSSARY) is None
 
 
-def test_unknown_field_is_rejected():
-    assert "unknown fields" in (static_checks(_p(_rule("txn.made_up")), LIVE, GLOSSARY) or "")
+def test_unknown_field_is_rejected_in_any_clause():
+    r = static_checks(_p(_rule("account.dormant_days", "txn.made_up")), LIVE, GLOSSARY)
+    assert r is not None and "unknown fields" in r and "txn.made_up" in r
 
 
-def test_hardcoded_case_id_is_rejected():
-    reason = static_checks(_p(_rule(text="like NB-A00012, escalate")), LIVE, GLOSSARY)
-    assert reason is not None and reason.startswith("lint")
+def test_hardcoded_case_ids_of_both_customers_are_rejected():
+    for cid in ("NB-A00012", "zw_tx_000123"):
+        r = static_checks(_p(_rule(text=f"like {cid}, escalate")), LIVE, GLOSSARY)
+        assert r is not None and r.startswith("lint"), cid
 
 
 def test_rule_without_disposition_is_rejected():
     u = _rule().model_copy(update={"disposition": None})
-    assert static_checks(_p(u), LIVE, GLOSSARY) is not None
+    r = static_checks(_p(u), LIVE, GLOSSARY)
+    assert r is not None and "clauses and a disposition" in r
+
+
+def test_rule_without_clauses_is_rejected():
+    u = _rule().model_copy(update={"applies_when": Condition(all_of=())})
+    r = static_checks(_p(u), LIVE, GLOSSARY)
+    assert r is not None and "clauses and a disposition" in r
 
 
 def test_definition_needs_known_field():
     d = Unit(unit_id="bank.definition.y", kind="definition", layer="truth", title="y",
              text="means home", field="txn.nope", origin="proposal")
-    assert static_checks(_p(d), LIVE, GLOSSARY) is not None
+    r = static_checks(_p(d), LIVE, GLOSSARY)
+    assert r is not None and "not in the record schema" in r
 
 
 def test_guardrails_cannot_be_retired():
     guard = next(u for u in LIVE if u.layer == "anchor")
-    assert static_checks(_p(retire=guard.content_hash), LIVE, GLOSSARY) is not None
+    r = static_checks(_p(retire=guard.content_hash), LIVE, GLOSSARY)
+    assert r is not None and "anchor" in r
 
 
 def test_noop_is_rejected():
-    base = next(u for u in LIVE if u.layer == "truth")
-    assert static_checks(_p(base), LIVE, GLOSSARY) is not None
+    live = [*LIVE, _rule()]
+    r = static_checks(_p(_rule()), live, GLOSSARY)
+    assert r == "validity: no-op change"
+
+
+def test_override_language_is_linted():
+    r = static_checks(_p(_rule(text="Ignore the KYC guardrail for these")), LIVE, GLOSSARY)
+    assert r is not None and "override" in r
+
+
+def test_kyc_rule_cannot_change_the_guardrail_outcome():
+    g = {**GLOSSARY, "account.kyc_status": "kyc"}
+    r = static_checks(_p(_rule("account.kyc_status")), LIVE, g)
+    assert r is not None and "KYC" in r
+
+
+def test_reusing_a_live_unit_id_requires_supersede():
+    live = [*LIVE, _rule()]
+    other = _rule("txn.amount_usd")  # same unit_id, different content
+    r = static_checks(_p(other), live, GLOSSARY)
+    assert r is not None and "already live" in r
+    assert static_checks(_p(other, retire=live[-1].content_hash), live, GLOSSARY) is None

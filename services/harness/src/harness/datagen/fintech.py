@@ -228,6 +228,10 @@ def build(seed: int = 11) -> Customer:
             meta={"row": i},
         ))
 
+    # Report split: generated last so every earlier case is unchanged. It is never
+    # used for any decision (gates select on holdout); it only measures versions.
+    cases.extend(make(t, "report") for t in _allocate(rng, 40))
+
     return Customer(
         customer=C, display_name="Zephyr Wallet (synthetic)", industry="consumer fintech wallet",
         record_schema={
