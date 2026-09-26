@@ -235,3 +235,37 @@ async def probes(customer: str) -> list[dict[str, Any]]:
 
 async def ladder(customer: str) -> list[dict[str, Any]]:
     return [_clean(r) async for r in eval_db()["ladder"].find({"customer": customer})]
+
+
+async def retro(customer: str) -> dict[str, Any]:
+    """FDE retrospectives per round, the discovery playbook, and feedback uptake.
+
+    Uptake: for each cause, the rounds it appeared in and whether it appeared again
+    in a round after a lesson for it became active (learning = it stops recurring).
+    """
+    db = app_db()
+    run = await db["runs"].find_one({"customer": customer}, sort=[("started_at", -1)])
+    run_id = run["_id"] if run else None
+    fb = [_clean(d) async for d in db["fde_feedback"].find(
+        {"customer": customer, "run_id": run_id}).sort("batch", 1)]
+    lessons = [_clean(d) async for d in db["method_lessons"].find(
+        {"customer": customer, "run_id": run_id}).sort("created_batch", 1)]
+    active = [x for x in lessons if x["status"] == "active"]
+    rounds = [{"round": d["batch"], "phase": d["phase"], "fde_id": d["fde_id"],
+               "failed_cases": d["failed_cases"], "explained_cases": d["explained_cases"],
+               "items": d["items"],
+               "lessons_active": [x["lesson_id"] for x in active
+                                  if x["created_batch"] <= d["batch"]]} for d in fb]
+    uptake = []
+    for cause in sorted({i["cause"] for d in fb for i in d["items"]}):
+        seen = sorted({d["batch"] for d in fb if any(i["cause"] == cause for i in d["items"])})
+        lesson = next((x for x in active if x["cause"] == cause), None)
+        learned = lesson["created_batch"] if lesson else None
+        after = [r for r in seen if learned is not None and r > learned]
+        uptake.append({"cause": cause, "rounds": seen, "lesson_round": learned,
+                       "lesson_id": lesson["lesson_id"] if lesson else None,
+                       "rounds_after_lesson": after,
+                       "recurred_after_lesson": (bool(after) if learned is not None
+                                                 and any(d["batch"] > learned for d in fb)
+                                                 else None)})
+    return {"run_id": run_id, "rounds": rounds, "lessons": lessons, "uptake": uptake}

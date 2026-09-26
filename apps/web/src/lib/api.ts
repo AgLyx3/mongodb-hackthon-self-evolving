@@ -167,7 +167,82 @@ export type LadderRow = {
   leak_checks: number;
 };
 
+export type RetroItem = {
+  cause: string;
+  target_unit_id: string | null;
+  cases: string[];
+  n_cases: number;
+  message: string;
+  suggested_action: string;
+};
+export type RetroRound = {
+  round: number;
+  phase: string;
+  fde_id: string;
+  failed_cases: number;
+  explained_cases: number;
+  items: RetroItem[];
+  lessons_active: string[];
+};
+export type Lesson = {
+  id: string;
+  lesson_id: string;
+  cause: string;
+  text: string;
+  created_batch: number;
+  status: string;
+  lint: string | null;
+  source_feedback_ids: string[];
+};
+export type UptakeRow = {
+  cause: string;
+  rounds: number[];
+  lesson_round: number | null;
+  lesson_id: string | null;
+  rounds_after_lesson: number[];
+  recurred_after_lesson: boolean | null;
+};
+export type Retro = {
+  run_id: string | null;
+  rounds: RetroRound[];
+  lessons: Lesson[];
+  uptake: UptakeRow[];
+};
+
+export type Actor =
+  | "system"
+  | "investigator"
+  | "tool"
+  | "customer"
+  | "proposer"
+  | "gates"
+  | "fde"
+  | "playbook";
+export type ConversationMessage = {
+  seq: number;
+  round: number;
+  actor: Actor;
+  kind: string;
+  text: string;
+  who: string | null;
+  detail: string | null;
+  sources: string[];
+  items: string[];
+  status: string | null;
+  ref: string | null;
+  depth: number;
+};
+export type Conversation = {
+  run_id: string | null;
+  fde_mode: string | null;
+  status: string | null;
+  runtime_model: string | null;
+  messages: ConversationMessage[];
+};
+
 export const api = {
+  conversation: (c: string) => get<Conversation>(`/api/customers/${c}/conversation`),
+  retro: (c: string) => get<Retro>(`/api/customers/${c}/retro`),
   probes: (c: string) => get<Probe[]>(`/api/customers/${c}/probes`),
   ladder: (c: string) => get<LadderRow[]>(`/api/customers/${c}/ladder`),
   comparison: (c: string) => get<Comparison>(`/api/customers/${c}/comparison`),

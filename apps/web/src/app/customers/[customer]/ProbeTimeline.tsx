@@ -1,6 +1,6 @@
 import type { Probe } from "@/lib/api";
 
-function argsText(p: Probe): string {
+export function argsText(p: Pick<Probe, "tool" | "args">): string {
   const a = p.args as Record<string, unknown>;
   if (p.tool === "search_evidence") return `"${String(a.query ?? "")}"${a.source_id ? ` in ${String(a.source_id)}` : ""}`;
   if (p.tool === "ask_customer") return `"${String(a.question ?? "")}"`;

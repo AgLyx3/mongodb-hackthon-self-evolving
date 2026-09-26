@@ -41,6 +41,7 @@ class KeySignal:
     field: str | None
     meaning_keywords: tuple[str, ...]
     description: str
+    locations: tuple[str, ...] = ()  # source ids where the evidence lives (retro only)
 
 
 @dataclass(frozen=True)

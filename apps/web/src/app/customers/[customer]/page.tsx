@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { api } from "@/lib/api";
 import { AccuracyChart } from "./AccuracyChart";
@@ -6,6 +7,7 @@ import { Kpis } from "./Kpis";
 import { LadderTable } from "./LadderTable";
 import { ProbeTimeline } from "./ProbeTimeline";
 import { ProposalList } from "./ProposalList";
+import { RetroSection } from "./RetroSection";
 import { Section } from "./Section";
 import { SourceHeatmap } from "./SourceHeatmap";
 import { TapInTable } from "./TapInTable";
@@ -18,7 +20,7 @@ export default async function CustomerPage({ params }: { params: Promise<{ custo
   if (customer !== "bank" && customer !== "fintech") notFound();
   let data;
   try {
-    const [customers, timeline, proposals, sources, metrics, harness, comparison, probes, ladder] =
+    const [customers, timeline, proposals, sources, metrics, harness, comparison, probes, ladder, retro] =
       await Promise.all([
       api.customers(),
       api.timeline(customer),
@@ -29,8 +31,9 @@ export default async function CustomerPage({ params }: { params: Promise<{ custo
       api.comparison(customer),
       api.probes(customer),
       api.ladder(customer),
+      api.retro(customer),
     ]);
-    data = { customers, timeline, proposals, sources, metrics, harness, comparison, probes, ladder };
+    data = { customers, timeline, proposals, sources, metrics, harness, comparison, probes, ladder, retro };
   } catch {
     return (
       <p>
@@ -55,6 +58,9 @@ export default async function CustomerPage({ params }: { params: Promise<{ custo
         <span className="muted">
           {c.industry} · live version <span className="mono">{c.live_version ?? "–"}</span>
         </span>
+        <Link href={`/customers/${customer}/conversation`} style={{ color: "var(--color-primary)", marginLeft: "auto" }}>
+          Watch the run as a conversation
+        </Link>
       </div>
       <p className="muted prose-block" style={{ marginBottom: "var(--space-4)" }}>
         {customer === "fintech"
@@ -90,6 +96,13 @@ export default async function CustomerPage({ params }: { params: Promise<{ custo
         caption="Same loop, same data, different simulated FDE. If only the full-answer-key reviewer does well, the reviewer is doing the work. Leaks: answer-key canary tokens found in anything the FDE sent back."
       >
         <LadderTable rows={data.ladder} />
+      </Section>
+
+      <Section
+        title="FDE retrospectives"
+        caption="After each round the FDE looks at the cases the live harness got wrong, traces each one back through the agent's own probes and findings, and gives method feedback (never the answer). Feedback that repeats becomes a lesson in the agent's discovery playbook, which shapes the investigator and proposer but never the triage prompt. Learning shows as a correction that stops recurring after its lesson."
+      >
+        <RetroSection retro={data.retro} />
       </Section>
 
       <Section

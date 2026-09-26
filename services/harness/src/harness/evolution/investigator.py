@@ -79,14 +79,18 @@ def priors_text(priors: dict[str, float] | None) -> str:
 async def investigate(
     *, customer: str, batch: int, units: list[Unit], failures: list[dict[str, Any]],
     revealed_batches: list[int], budget: int, priors: dict[str, float] | None,
-    run_tag: str, max_turns: int = 14,
+    run_tag: str, max_turns: int = 14, feedback: str = "(no feedback yet)",
+    playbook: str = "(no lessons yet)",
 ) -> tuple[list[Finding], Toolbox]:
+    """feedback / playbook: rendered FDE retrospective items and discovery-playbook
+    lessons (method memory; never rendered into the triage prompt)."""
     s = get_settings()
     manifest, glossary = await manifest_text(customer)
     system = _template().format(
         customer=customer, manifest=manifest, priors=priors_text(priors),
         glossary="\n".join(f"- {k}: {v}" for k, v in glossary.items()),
-        harness=render_harness(units), failures=failures_text(failures), budget=budget)
+        harness=render_harness(units), failures=failures_text(failures), budget=budget,
+        feedback=feedback, playbook=playbook)
     tb = Toolbox(customer, batch, run_tag, budget, revealed_batches)
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system},

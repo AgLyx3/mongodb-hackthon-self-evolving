@@ -140,7 +140,7 @@ def summarize(p: Proposal) -> str:
 async def propose(
     *, customer: str, batch: int, parent_version: str, live: list[Unit],
     findings: list[Finding], max_proposals: int = 3, recall_enabled: bool = True,
-    persist: bool = True,
+    persist: bool = True, targets: str = "(none)", playbook: str = "(no lessons yet)",
 ) -> tuple[list[Proposal], list[dict[str, Any]]]:
     """recall_enabled=False and persist=False give the feedback-uptake ablation:
     same findings, no memory of past FDE decisions, nothing written."""
@@ -148,7 +148,8 @@ async def propose(
     recalled = await recall(customer, findings) if recall_enabled else []
     system = PROMPT.read_text().split("-->", 1)[1].strip().format(
         customer=customer, harness=render_harness(live), findings=_findings_text(findings),
-        recalled=_recalled_text(recalled), max_proposals=max_proposals)
+        recalled=_recalled_text(recalled), max_proposals=max_proposals,
+        targets=targets, playbook=playbook)
     drafts, _, _ = await structured(model=s.proposer_model, system=system, schema=Drafts,
                                     user="Write the proposals.", max_tokens=2500,
                                     purpose="propose")

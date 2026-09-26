@@ -84,7 +84,7 @@ async def revert(customer: str, model: str, to_version: str, *, reason: str,
 # proposals, decisions and transcripts stay inspectable.
 RUN_COLLS_APP: dict[str, dict[str, Any]] = {
     "proposals": {}, "gate_results": {}, "fde_decisions": {}, "probes": {}, "findings": {},
-    "pointer_events": {}, "live_pointers": {},
+    "pointer_events": {}, "live_pointers": {}, "fde_feedback": {}, "method_lessons": {},
     "outcomes": {"batch": {"$gt": 0}},
     "traces": {"tag": {"$ne": "calibration"}},
 }

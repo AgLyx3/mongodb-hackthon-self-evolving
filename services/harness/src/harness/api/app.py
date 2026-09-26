@@ -8,11 +8,13 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from harness.adapters.mongo import views
+from harness.api.conversation import router as conversation_router
 from harness.datagen.registry import is_known
 
 app = FastAPI(title="Self-evolving FDE harness")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000"],
                    allow_methods=["GET"], allow_headers=["*"])
+app.include_router(conversation_router)
 def _check(customer: str) -> None:
     if not is_known(customer):
         raise HTTPException(status_code=404, detail="unknown customer")
@@ -71,3 +73,9 @@ async def probes(customer: str) -> list[dict[str, Any]]:
 async def ladder(customer: str) -> list[dict[str, Any]]:
     _check(customer)
     return await views.ladder(customer)
+
+
+@app.get("/api/customers/{customer}/retro")
+async def retro(customer: str) -> dict[str, Any]:
+    _check(customer)
+    return await views.retro(customer)

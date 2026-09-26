@@ -3,9 +3,10 @@ import type { LadderRow } from "@/lib/api";
 const LABEL: Record<string, string> = {
   none: "No FDE (auto-accept whatever passes the gates)",
   hints: "FDE gives hints only (counterexamples, never the fix)",
+  retro: "FDE retrospective on method (no per-proposal review)",
   oracle: "FDE with the full answer key (writes exact scope)",
 };
-const ORDER = ["none", "hints", "oracle"];
+const ORDER = ["none", "retro", "hints", "oracle"];
 
 function pct(x: number | null | undefined): string {
   return x === null || x === undefined ? "–" : `${Math.round(x * 100)}%`;

@@ -23,10 +23,37 @@ def _scope(u: dict[str, Any] | None) -> str:
         f" → **{u.get('disposition')}**"
 
 
-async def main(customer: str) -> str:
-    db, ev = app_db(), eval_db()
+class _View:
+    """Reads live collections, or archive_<coll> filtered by run_id for past runs."""
+
+    def __init__(self, db: Any, run_id: str | None) -> None:
+        self.db, self.run_id = db, run_id
+
+    def __getitem__(self, coll: str) -> Any:
+        if self.run_id is None or coll in ("cases", "customers"):
+            return self.db[coll]
+        return _Filtered(self.db[f"archive_{coll}"], {"run_id": self.run_id})
+
+
+class _Filtered:
+    def __init__(self, coll: Any, extra: dict[str, Any]) -> None:
+        self.coll, self.extra = coll, extra
+
+    def find(self, q: dict[str, Any] | None = None, *a: Any, **k: Any) -> Any:
+        return self.coll.find({**(q or {}), **self.extra}, *a, **k)
+
+    async def find_one(self, q: dict[str, Any] | None = None, *a: Any, **k: Any) -> Any:
+        q = dict(q or {})
+        if "proposal_id" in q:  # archived docs keep original ids in orig_id / fields
+            pass
+        return await self.coll.find_one({**q, **self.extra}, *a, **k)
+
+
+async def main(customer: str, run_id: str | None = None) -> str:
+    db, ev = _View(app_db(), run_id), _View(eval_db(), run_id)
     lines = [f"# Transcript: {customer}", ""]
-    ladder = [r async for r in ev["ladder"].find({"customer": customer}).sort("at", -1)]
+    ladder = [r async for r in eval_db()["ladder"].find(
+        {"customer": customer, **({"run_id": run_id} if run_id else {})}).sort("at", -1)]
     if ladder:
         r = ladder[0]
         lines += [f"Latest run: FDE mode **{r['mode']}**, noise {r['noise']}, "
@@ -59,7 +86,7 @@ async def main(customer: str) -> str:
                                             ).sort("created_at", 1):
             await _thread(p, db, ev, lines)
     out = "\n".join(lines) + "\n"
-    path = REPO_ROOT / "research" / "transcripts" / f"{customer}.md"
+    path = REPO_ROOT / "research" / "transcripts" / f"{run_id or customer}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(out)
     return str(path)
@@ -67,6 +94,7 @@ async def main(customer: str) -> str:
 
 async def _thread(p: dict[str, Any], db: Any, ev: Any, lines: list[str], depth: int = 0) -> None:
     ind = "  " * depth
+    pid = p.get("orig_id", p["_id"])  # archived runs prefix _id with the run id
     if p.get("invalid"):
         lines += [f"{ind}**Proposer:** (draft could not be parsed: {p['invalid']})", ""]
         return
@@ -84,19 +112,19 @@ async def _thread(p: dict[str, Any], db: Any, ev: Any, lines: list[str], depth: 
         lines.append(f"{ind}> recalled {len(rec)} past decision(s): " + "; ".join(
             f"{r['proposal_id']} → {r.get('fde_action') or 'stopped at gates'}" for r in rec[:3]))
     lines.append("")
-    async for g in db["gate_results"].find({"proposal_id": p["_id"]}).sort("at", 1):
+    async for g in db["gate_results"].find({"proposal_id": pid}).sort("at", 1):
         if g["gate"] in ("summary",):
             continue
-        priv = await ev["gate_private"].find_one({"proposal_id": p["_id"], "gate": g["gate"]})
+        priv = await ev["gate_private"].find_one({"proposal_id": pid, "gate": g["gate"]})
         detail = (priv or {}).get("detail") or g["detail"]
         lines.append(f"{ind}- **Gates · {g['gate']}:** {'pass' if g['passed'] else 'FAIL'}: "
                      f"{detail}")
-    d = await db["fde_decisions"].find_one({"proposal_id": p["_id"]})
+    d = await db["fde_decisions"].find_one({"proposal_id": pid})
     if d:
         lines += ["", f"{ind}**FDE** ({d.get('fde_id', 'sim-fde:jordan')}): *{d['action']}* "
                   f"[{d['reason_tag']}]", f"{ind}> {d['rationale']}"]
         for cid in d.get("counterexamples", []):
-            c = await db["cases"].find_one({"_id": cid})
+            c = await app_db()["cases"].find_one({"_id": cid})
             lab = await db["outcomes"].find_one({"case_id": cid})
             lines.append(f"{ind}> - `{cid}` (correct: {lab['label'] if lab else '?'}): "
                          f"`{json.dumps(c['record']) if c else ''}`")
@@ -108,10 +136,11 @@ async def _thread(p: dict[str, Any], db: Any, ev: Any, lines: list[str], depth: 
     elif not p.get("invalid"):
         lines.append(f"{ind}**FDE:** not consulted (stopped by the gates).")
     lines.append("")
-    child = await db["proposals"].find_one({"revision_of": p["_id"]})
+    child = await db["proposals"].find_one({"revision_of": pid})
     if child:
         await _thread(child, db, ev, lines, depth + 1)
 
 
 if __name__ == "__main__":
-    print(asyncio.run(main(sys.argv[1] if len(sys.argv) > 1 else "bank")))
+    print(asyncio.run(main(sys.argv[1] if len(sys.argv) > 1 else "bank",
+                           sys.argv[2] if len(sys.argv) > 2 else None)))

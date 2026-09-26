@@ -36,6 +36,34 @@ For each customer, per batch of alerts (compliance alert triage: `close_false_po
 7. **Promote.** Promotion creates an immutable, content-hashed version, and the live pointer moves. Only FDE actions move it.
 8. **Learn where to look.** Sources behind surviving changes gain usefulness, which steers the next investigation.
 
+## How MongoDB is used
+
+**MongoDB Atlas is the agent's memory and the kernel's source of truth.** Every step of the loop reads from and writes to Atlas.
+
+| Atlas capability | Where | What it does in this project |
+|---|---|---|
+| **Atlas Vector Search + Automated Embedding** (`autoEmbed`, `voyage-4`) | `evidence` collection, index `evidence_autoembed` | The investigator searches interviews, QC comments, SOPs and chat semantically (`$vectorSearch` with a plain-text `query`). Atlas embeds documents and queries itself; there is no embedding code. The customer scope is an index-native `filter`. |
+| **Vector Search over the agent's own history** | `proposals` collection, index `proposals_autoembed` | Before writing a proposal, the proposer recalls similar past proposals **for the same customer** and the FDE's decisions on them. This is how corrections are remembered. |
+| **Procedural memory: versioned harness** | `units`, `harness_versions`, `live_pointers`, `pointer_events` | Each rule is an immutable, content-hashed document. A version is a set of unit hashes. Going live or rolling back is one atomic pointer update, and every pointer move is appended to `pointer_events`. |
+| **Episodic memory: append-only logs** | `traces`, `probes`, `findings`, `proposals`, `gate_results`, `fde_decisions`, `fde_feedback`, `method_lessons` | Everything the agents did, what the gates found, what the FDE said, and the lessons the agent drew. The console and transcripts are read straight from these. |
+| **Run history, never deleted** | `runs`, `archive_*` | Before a new run, the previous run's documents are moved into `archive_<collection>` under its `run_id`. Every experiment stays inspectable. |
+| **Database-level access control for agent safety** | custom role `fdeProposer`, two databases | The proposer connects as a DB user that can **only insert into `proposals`**. It cannot write versions, pointers or gates, so an agent can't promote its own change even by mistake. Verified: writes elsewhere return error 13. |
+| **Separate database for the eval** | `fde_eval` (`answer_key`, `case_labels`, `oracle`, private scores) | The proposer's DB user has no role on `fde_eval`, so holdout labels and the answer key are unreadable by the agents being evaluated. |
+| **Cache and budget ledger** | `llm_cache`, `llm_spend`, `llm_calls` | LLM responses are cached by input hash, and an atomic `$inc` ledger enforces a hard spend stop. |
+| **Async PyMongo, indexes in code** | `adapters/mongo/` | Async driver throughout. Regular and search indexes are declared in code and created idempotently. |
+
+## Tech stack
+
+| Layer | What we used |
+|---|---|
+| Database / memory | **MongoDB Atlas** (M10), **Atlas Vector Search** with **Automated Embedding (Voyage AI `voyage-4`)**, async **PyMongo 4.17**, Atlas CLI (DB users and custom roles) |
+| LLMs | **OpenRouter**. `openai/gpt-5.6-luna` runs triage, investigator, proposer and lesson writer; `anthropic/claude-sonnet-5` is the strong-model baseline. Direct `httpx` client with JSON-schema structured output. |
+| Backend | Python 3.12, **FastAPI**, Pydantic v2, pydantic-settings, `uv`, pytest, ruff |
+| Frontend | **Next.js 16** (App Router, server components), React 19, TypeScript, Tailwind CSS 4, Recharts, `pnpm` |
+| Agents | Small custom tool-calling loop (investigator) plus structured single calls (triage, proposer). No agent framework at runtime. |
+| Eval independence | **OpenAI Codex CLI** wrote the held-out customer as a separate agent; the builder never read it. |
+| Built with | Claude Code (Opus 5.5) with subagents for research, adversarial review (`evolution-safety`) and test mutation audits (`check-auditor`) |
+
 ## Results
 
 _Filled in from the final runs below._
@@ -62,12 +90,7 @@ services/harness (Python 3.12, FastAPI)
 apps/web (Next.js)  FDE console: proposals, gates, recall, versions, source heat map
 ```
 
-| Atlas collection | Memory type |
-|---|---|
-| `units`, `harness_versions`, `live_pointers`, `pointer_events` | procedural (versioned harness) |
-| `traces`, `probes`, `findings`, `proposals`, `gate_results`, `fde_decisions` | episodic (append-only) |
-| `evidence` (autoEmbed vector index), `proposals` (autoEmbed) | semantic recall |
-| `fde_eval.*` | answer key, labels, private scores (app user only) |
+See **How MongoDB is used** above for the collection-by-collection breakdown.
 
 ## Run it
 

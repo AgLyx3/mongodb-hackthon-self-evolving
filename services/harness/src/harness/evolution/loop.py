@@ -17,6 +17,7 @@ from harness.config import get_settings
 from harness.core.base_harness import base_units
 from harness.core.conditions import Clause, Condition
 from harness.core.fde import KeySignal, decide, judge_unit
+from harness.core.fde_retro import FailedCase, render_feedback, render_playbook
 from harness.core.kernel import FdeDecision, KernelError, Proposal, promote, unit_edit_distance
 from harness.core.units import HarnessVersion, Unit, make_version
 from harness.evolution.evaluate import CaseResult, glossary, load_cases, run_eval
@@ -24,6 +25,7 @@ from harness.evolution.gates import backtest, static_checks
 from harness.evolution.investigator import investigate
 from harness.datagen.registry import module_for
 from harness.evolution.proposer import propose, revise
+from harness.evolution.retro import active_lessons, run_retro, update_playbook
 
 log = logging.getLogger(__name__)
 PROBE_BUDGET = 24
@@ -45,7 +47,8 @@ async def answer_key(customer: str) -> tuple[list[KeySignal], list[dict[str, Any
         key.append(KeySignal(signal_id=s["signal_id"], kind=s["kind"], condition=cond,
                              disposition=s.get("disposition"), field=s.get("field"),
                              meaning_keywords=tuple(s.get("meaning_keywords") or ()),
-                             description=f"{s['description']} [{canary(s['signal_id'])}]"))
+                             description=f"{s['description']} [{canary(s['signal_id'])}]",
+                             locations=tuple(s.get("locations") or ())))
     recs = [d["record"] async for d in app_db()["cases"].find({"customer": customer},
                                                                {"record": 1})]
     return key, recs
@@ -118,7 +121,7 @@ async def score_report(customer: str, units: list[Unit], version: str, model: st
 
 
 async def run_customer(customer: str, batches: int = 3, *, use_priors: bool = True,
-                       ablation_batch: int | None = 3, fde_mode: str = "hints",
+                       ablation_batch: int | None = 3, fde_mode: str = "retro",
                        fde_noise: float = 0.0, fde_seed: int = 0) -> dict[str, Any]:
     s = get_settings()
     fde = {"mode": fde_mode, "noise": fde_noise, "seed": fde_seed,
@@ -148,12 +151,24 @@ async def run_customer(customer: str, batches: int = 3, *, use_priors: bool = Tr
              noise_accs, 100 * rep_acc)
 
     revealed: list[int] = []
+    retro_on = fde_mode == "retro"
+    retro_ctx = {"feedback": "(no feedback yet)", "playbook": "(no lessons yet)",
+                 "targets": "(none)"}
+    replay: list[dict[str, Any]] = []
     for t in range(1, batches + 1):
         batch_cases = await load_cases(customer, [f"batch{t}"])
-        await run_eval(customer, units, batch_cases, model=model, tag=f"work:b{t}")
+        work = await run_eval(customer, units, batch_cases, model=model, tag=f"work:b{t}")
         await reveal(customer, t)
         revealed.append(t)
         replay = await load_cases(customer, [f"batch{b}" for b in revealed])
+        retro_doc = None
+        if retro_on and t >= 2:
+            # Results-driven retrospective: round-t failures under the harness live then,
+            # traced back through the agent's own trail (method feedback, not rule review).
+            recs = {c["_id"]: c["record"] for c in batch_cases}
+            retro_doc = await _retro(customer, run_id, t, "start", work, recs, units, key,
+                                     all_records, {c["_id"] for c in replay})
+            retro_ctx = await _retro_context(customer, run_id, retro_doc)
         inc = await run_eval(customer, units, replay + holdout, model=model, tag=f"incumbent:b{t}")
         incumbent = {r.case_id: r for r in inc}
         labels_rec = {c["_id"]: c["record"] for c in replay}
@@ -163,22 +178,23 @@ async def run_customer(customer: str, batches: int = 3, *, use_priors: bool = Tr
         priors = (await usefulness(customer, model)) if (use_priors and t > 1) else None
         findings, tb = await investigate(
             customer=customer, batch=t, units=units, failures=failures,
-            revealed_batches=revealed, budget=PROBE_BUDGET, priors=priors, run_tag="main")
+            revealed_batches=revealed, budget=PROBE_BUDGET, priors=priors, run_tag="main",
+            feedback=retro_ctx["feedback"], playbook=retro_ctx["playbook"])
         await app_db()["findings"].insert_many([
             {"customer": customer, "batch": t, "run_tag": "main", **f.model_dump()}
             for f in findings] or [{"customer": customer, "batch": t, "empty": True}])
 
         if ablation_batch == t:
-            await _ablation(customer, t, units, failures, revealed)
+            await _ablation(customer, t, units, failures, revealed, retro_ctx)
 
         labels_by_id = {r.case_id: r.label for r in inc}
         visible = [(c["_id"], c["record"], labels_by_id[c["_id"]]) for c in replay]
         proposals, _recalled = await propose(
             customer=customer, batch=t, parent_version=version.version_hash, live=units,
-            findings=findings)
+            findings=findings, targets=retro_ctx["targets"], playbook=retro_ctx["playbook"])
         if ablation_batch == t:
             await _uptake_ablation(customer, t, version, units, findings, proposals, key,
-                                   all_records, visible, fde)
+                                   all_records, visible, fde, retro_ctx)
         promoted_ids: list[str] = []
         for p in proposals:
             if p.parent_version != version.version_hash:
@@ -209,12 +225,62 @@ async def run_customer(customer: str, batches: int = 3, *, use_priors: bool = Tr
             "findings": len(findings), "proposals": len(proposals),
             "promoted": promoted_ids, "priors_used": priors or {},
             "usefulness_after": await usefulness(customer, model),
+            "retro_causes": _cause_counts(retro_doc),
             "spent_usd": await spent_usd(), "at": datetime.now(UTC)})
         log.info("%s batch %d done: version %s, report %.0f%%", customer, t,
                  version.version_hash, 100 * (last["acc"] if last else 0))
+    if retro_on and replay:
+        # Final retrospective: revealed cases the final harness still gets wrong (for metrics).
+        recs = {c["_id"]: c["record"] for c in replay}
+        final = [incumbent[cid] for cid in recs if cid in incumbent]
+        doc = await _retro(customer, run_id, batches + 1, "final", final, recs, units, key,
+                           all_records, set(recs))
+        await ev["batch_reports"].update_one(
+            {"customer": customer, "batch": batches},
+            {"$set": {"retro_causes_final": _cause_counts(doc)}})
     await _ladder_summary(customer, fde, version.version_hash)
     await finish_run(run_id, version.version_hash)
     return {"customer": customer, "final_version": version.version_hash}
+
+
+async def _retro(customer: str, run_id: str, batch: int, phase: str,
+                 results: list[CaseResult], records: dict[str, dict[str, Any]],
+                 units: list[Unit], key: list[KeySignal], all_records: list[dict[str, Any]],
+                 revealed_ids: set[str]) -> dict[str, Any]:
+    failed = [FailedCase(case_id=r.case_id, record=records[r.case_id], predicted=r.predicted,
+                         label=r.label, applied=tuple(r.applied), case_type=r.case_type)
+              for r in results if not r.correct and r.predicted is not None
+              and r.case_id in records]  # an infra failure (no answer) is not a method miss
+    doc = await run_retro(customer=customer, run_id=run_id, batch=batch, phase=phase,
+                          failed=failed, units=units, key=key, records=all_records,
+                          revealed_case_ids=revealed_ids)
+    await _leak_check_text(customer, batch, f"retro:{phase}",
+                           " ".join(i["message"] for i in doc["items"]))
+    try:
+        await update_playbook(customer=customer, run_id=run_id, batch=batch)
+    except BudgetExceeded:
+        log.warning("lesson writing skipped: budget")
+    log.info("%s retro %s round %d: %s", customer, phase, batch,
+             [(i["cause"], i["n_cases"]) for i in doc["items"]])
+    return doc
+
+
+async def _retro_context(customer: str, run_id: str, doc: dict[str, Any]) -> dict[str, str]:
+    items = doc["items"]
+    targets = [i for i in items if i["suggested_action"] in ("revise_unit", "retire_unit")]
+    tgt = "\n".join(f"- {i['target_unit_id']}: {i['suggested_action']} ({i['cause']}). "
+                     f"{i['message']}" for i in targets) or "(none)"
+    return {"feedback": render_feedback(items),
+            "playbook": render_playbook(await active_lessons(customer, run_id)),
+            "targets": tgt}
+
+
+def _cause_counts(doc: dict[str, Any] | None) -> dict[str, int]:
+    """Failed cases explained per retro cause (empty when no retro ran)."""
+    out: Counter[str] = Counter()
+    for i in (doc or {}).get("items", []):
+        out[i["cause"]] += int(i.get("n_cases", len(i["cases"])))
+    return dict(out)
 
 
 def _public_detail(rep_failed: str | None, passed: bool, fixed: int, broken: int) -> str:
@@ -296,6 +362,14 @@ async def _review(
                                action="accept", reason_tag="correct",
                                rationale="Auto-accepted: passed all gates (no-FDE baseline).")
         sig = matched
+    elif fde["mode"] == "retro":
+        # The FDE reviews results and method after each round, not each proposal. The
+        # gates still screen every change and promotion still goes through the kernel.
+        decision = FdeDecision(proposal_id=p.proposal_id, fde_id="auto:gates",
+                               action="accept", reason_tag="correct",
+                               rationale="Auto-accepted: passed all gates (retro mode; the "
+                                         "FDE reviews round results, not single proposals).")
+        sig = matched
     else:
         decision, sig = decide(p, units, key, records, fde["rubric"], mode=fde["mode"],
                                visible=visible, allow_revise=attempt == 0,
@@ -368,6 +442,13 @@ async def _review(
     return units, version, False, incumbent
 
 
+async def _leak_check_text(customer: str, batch: int, ref: str, text: str) -> None:
+    """Flag any answer-key canary token in FDE retrospective text."""
+    await eval_db()["leak_checks"].insert_one({
+        "customer": customer, "batch": batch, "proposal_id": ref, "leaked": "KEY-" in text,
+        "fde_id": "sim-fde:jordan", "at": datetime.now(UTC)})
+
+
 async def _leak_check(customer: str, batch: int, proposal_id: str, d: FdeDecision) -> None:
     """Flag any answer-key text (canary token) in what the FDE sends back."""
     text = d.rationale + (d.final_unit.text if d.final_unit else "")
@@ -380,13 +461,14 @@ async def _uptake_ablation(customer: str, batch: int, version: HarnessVersion,
                            units: list[Unit], findings: list[Any], main: list[Proposal],
                            key: list[KeySignal], records: list[dict[str, Any]],
                            visible: list[tuple[str, dict[str, Any], str]],
-                           fde: dict[str, Any]) -> None:
+                           fde: dict[str, Any], retro_ctx: dict[str, str]) -> None:
     """Feedback uptake: first-pass FDE verdicts on the same findings with memory of past
     FDE decisions (recall) vs without. Nothing from the no-recall arm is promoted."""
     try:
         norecall, _ = await propose(customer=customer, batch=batch,
                                     parent_version=version.version_hash, live=units,
-                                    findings=findings, recall_enabled=False, persist=False)
+                                    findings=findings, recall_enabled=False, persist=False,
+                                    targets=retro_ctx["targets"], playbook=retro_ctx["playbook"])
     except BudgetExceeded:
         return
     rows = []
@@ -419,13 +501,15 @@ async def _ladder_summary(customer: str, fde: dict[str, Any], final_version: str
 
 
 async def _ablation(customer: str, batch: int, units: list[Unit],
-                    failures: list[dict[str, Any]], revealed: list[int]) -> None:
+                    failures: list[dict[str, Any]], revealed: list[int],
+                    retro_ctx: dict[str, str]) -> None:
     """Same investigation without learned priors, for the 'learned where to look' metric."""
     try:
         findings, _tb = await investigate(
             customer=customer, batch=batch, units=units, failures=failures,
             revealed_batches=revealed, budget=PROBE_BUDGET, priors=None,
-            run_tag="ablation_no_priors")
+            run_tag="ablation_no_priors", feedback=retro_ctx["feedback"],
+            playbook=retro_ctx["playbook"])
         await app_db()["findings"].insert_many([
             {"customer": customer, "batch": batch, "run_tag": "ablation_no_priors",
              **f.model_dump()} for f in findings] or [{"customer": customer, "batch": batch,
@@ -448,7 +532,7 @@ if __name__ == "__main__":
 
     ap = argparse.ArgumentParser()
     ap.add_argument("customer", nargs="?", default="bank")
-    ap.add_argument("--fde-mode", default="hints", choices=["hints", "oracle", "none"])
+    ap.add_argument("--fde-mode", default="retro", choices=["retro", "hints", "oracle", "none"])
     ap.add_argument("--fde-noise", type=float, default=0.0)
     ap.add_argument("--fde-seed", type=int, default=0)
     a = ap.parse_args()
