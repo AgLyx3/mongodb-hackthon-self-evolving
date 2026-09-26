@@ -29,5 +29,11 @@ def app_db() -> AsyncDatabase:
     return _app_client()[get_settings().mongodb_db]
 
 
+def eval_db() -> AsyncDatabase:
+    """Answer key, labels, oracle answers. Only the app user can read it; the
+    proposer user has no role on this database."""
+    return _app_client()["fde_eval"]
+
+
 def proposer_db() -> AsyncDatabase:
     return _proposer_client()[get_settings().mongodb_db]

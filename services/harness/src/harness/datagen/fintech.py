@@ -151,11 +151,9 @@ def _sample(rng: random.Random, target: str, idx: int) -> dict[str, Any]:
             t["txn_type"] = rng.choice(["p2p", "payout"])
         case "fintech.rsk_ovr_7":
             t["rsk_ovr"] = 7
-            # Always something the SOP would escalate, so the override actually matters.
-            if rng.random() < 0.5:
-                t["cp_ctry_risk"] = "X"
-            else:
-                t["amt"] = round(rng.uniform(10_000, 40_000), 2)
+            # Always a large payment the base policy clearly escalates, so the override
+            # matters. (Not "X": models don't read X as high-risk untaught.)
+            t["amt"] = round(rng.uniform(10_000, 40_000), 2)
         case "fintech.home_code":
             t["cp_ctry_risk"] = "H"
             t["txn_type"] = rng.choice(["card", "p2p", "payout"])
@@ -272,6 +270,12 @@ def build(seed: int = 11) -> Customer:
         cases=cases,
         history_labels=history_labels,
         chunks=chunks,
+        aux_facts=[Signal(
+            signal_id="fintech.aux.kyc_tier", customer=C, shared=False, kind="definition",
+            description="wallet.kyc_lvl 0 means unverified (no KYC); 1 basic; 2 full.",
+            field="wallet.kyc_lvl", meaning_keywords=("unverified", "not verified",
+                                                      "no kyc", "no verification"),
+            locations=("interview_risk_lead", "customer_contact"), signal_type="aux")],
     )
 
 

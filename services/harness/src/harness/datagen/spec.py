@@ -61,3 +61,6 @@ class Customer(BaseModel):
     cases: list[Case]
     history_labels: dict[str, Disposition]  # case_id -> label, for labeled history rows
     chunks: list[Chunk]
+    # True facts the FDE can confirm that aren't counted as planted signals
+    # (e.g. what a tier code means). Keeps the reactive FDE from rejecting truth.
+    aux_facts: list[Signal] = []

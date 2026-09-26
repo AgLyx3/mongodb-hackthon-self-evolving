@@ -78,3 +78,21 @@ instructions. Codex CLI must be installed and authenticated in the environment
 where Claude runs the command. Run it only when the user requests the
 cross-model review; it sends the reviewed context to the configured Codex model
 provider, so follow the authorization rule in `CLAUDE.md`.
+
+## Design rationale to review against
+
+The project is judged by the panel in `research/judges.md`. `CLAUDE.md`
+("Design rationale: what the judges reward") turns that into five rules:
+glass box, rigor over vibes, MongoDB doing real work, deliberate model
+wrangling, and safe to operate. When reviewing, treat a change that breaks
+one of them as a finding if it causes a concrete gap. Examples:
+- A harness change or agent action that can't be traced to evidence, gate
+  results, and an FDE decision.
+- A score or "improved" label shown without its noise band or held-out result.
+- A model call that bypasses the spend cap, or uses a stronger model with no
+  measured need.
+- An eval or demo result without the strong-model baseline (strong model +
+  base harness), or eval cases a strong model can solve from a single case,
+  which would make the harness look useful when it isn't.
+- A path that mutates a version or log in place, or moves the live pointer
+  without an FDE action.

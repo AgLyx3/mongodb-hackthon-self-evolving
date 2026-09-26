@@ -36,10 +36,43 @@ MongoDB NYC hackathon, "The Harness Engineering & Model Wrangling Hackathon"
   and Agentic Memory tooling**. Named examples: agents that rewrite their own
   guardrails, systems that hold context across weeks-long tasks, new
   approaches to persistent agent memory.
-- **Judges** come from MongoDB, OpenRouter, AWS, Radical Ventures, Tenex, and
-  Vercel. The demo must make memory and self-evolution *visible*: show what
-  was recalled, what changed, and why.
 - Team size max 4.
+
+## Design rationale: what the judges reward
+
+Judges and their specialities are in `research/judges.md`. Five rules follow
+from them. Apply them to every design choice, and say which one a
+decision serves when it matters.
+
+1. **Glass box.** Every agent action and every harness change traces to its
+   evidence (failure traces), its gate results, and a named FDE decision.
+   Tenex, whose SOC does alert triage with forward-deployed engineers, sells
+   exactly this. If a change can't be explained on screen, it isn't done.
+2. **Rigor over vibes.** Every "improved" claim shows the delta, the noise
+   band, and held-out/replay results (Vin Sachidananda, a Stanford NLP PhD).
+   Never present an unresolved change as a win.
+3. **MongoDB does real work.** Versions, traces, decisions, and memory live in
+   Atlas; recall uses `$vectorSearch` with scope filters and returns
+   provenance (Joseph Morais, MongoDB evangelist).
+4. **Deliberate model wrangling.** A cheap model per task, a stronger model
+   only where measured to help, spend capped through OpenRouter (Louis Vichy,
+   OpenRouter co-founder; MongoDB Ventures invested in OpenRouter). The $10
+   budget is part of the story, not a limitation to hide.
+   **A strong model must not make the harness pointless.** Every eval
+   reports a strong-model baseline (strong model + base harness) next to the
+   evolved harness on the cheap model. The claim to earn: the evolved
+   harness matches or beats that baseline at a fraction of the cost, on
+   signal the strong model can't recover from a single case (the calibration
+   check in `harness-evolution.md` §5). If the strong model solves the cases
+   on the base harness, the eval set is wrong, not the harness right: fix the
+   cases before claiming anything.
+5. **Safe to operate.** Immutable versions, one-step FDE rollback, append-only
+   logs, inspectable traces (Andrey Sibirev, Vercel compute and reliability).
+
+Framing for the demo: self-improving steering rules that a human approves,
+which is the next step past hand-written agent config files (Brooke Jamieson,
+AWS). Expect Dan Zakon (Tenex) to ask whether an analyst would trust it and
+whether it reduces false positives; the demo should answer both unprompted.
 
 The public page lists no further hard rules. Attendee-only details may add
 some; paste them here if they do.
@@ -54,7 +87,7 @@ some; paste them here if they do.
 | Agent framework | **LangGraph (Python)** + `langgraph-checkpoint-mongodb` (state) + `langgraph-store-mongodb` (long-term memory) | MongoDB's official agent-memory integration |
 | Backend | Python 3.12, FastAPI, `uv` | |
 | Frontend | Next.js (App Router) + TypeScript, `pnpm` | |
-| LLM access | **OpenRouter** (OpenAI-compatible API), Claude as the default model | "Model wrangling" theme; OpenRouter is a judging partner; lets the harness route per task |
+| LLM access | **OpenRouter** (OpenAI-compatible API). No fixed vendor: the cheapest model that passes each task's eval by default; a stronger model only where measured to help; spend capped at the key. Model IDs come from OpenRouter's catalog, never from memory | "Model wrangling" theme; OpenRouter is a judging partner; $10 total budget |
 | Hosting | **Vercel** for web and the FastAPI service | One deploy target; Vercel is a judging partner |
 | Local DB | `mongodb/mongodb-atlas-local` Docker image | Supports `$vectorSearch` locally; plain `mongod` does not |
 

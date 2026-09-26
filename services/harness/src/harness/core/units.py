@@ -96,16 +96,37 @@ def apply_change(
     return list(new.values())
 
 
+def _render_unit(u: Unit) -> list[str]:
+    lines = [f"### [{u.unit_id}] {u.title}"]
+    if u.field is not None:
+        lines.append(f"Field: {u.field}")
+    if u.applies_when is not None:
+        lines.append(f"Applies when: {u.applies_when.render()}")
+    if u.disposition is not None:
+        lines.append(f"Disposition: {u.disposition}")
+    lines.append(u.text.strip())
+    lines.append("")
+    return lines
+
+
 def render_harness(units: list[Unit]) -> str:
     """Render units into the AGENTS.md-style text the runtime agent reads."""
-    order = {"anchor": 0, "truth": 1, "binding": 2}
-    lines = ["# Triage harness", ""]
-    for u in sorted(units, key=lambda u: (order[u.layer], u.kind, u.unit_id)):
-        lines.append(f"## [{u.unit_id}] {u.title}")
-        if u.applies_when is not None:
-            lines.append(f"Applies when: {u.applies_when.render()}")
-        if u.disposition is not None:
-            lines.append(f"Disposition: {u.disposition}")
-        lines.append(u.text.strip())
-        lines.append("")
+    anchor = sorted((u for u in units if u.layer == "anchor"), key=lambda u: u.unit_id)
+    custom = sorted((u for u in units if u.layer != "anchor" and u.origin != "base"),
+                    key=lambda u: (u.kind != "definition", u.unit_id))
+    base = sorted((u for u in units if u.layer != "anchor" and u.origin == "base"),
+                  key=lambda u: u.unit_id)
+    lines = ["# Triage harness", "", "## Guardrails (always apply)", ""]
+    for u in anchor:
+        lines += _render_unit(u)
+    lines += ["## Customer-specific knowledge",
+              "Definitions explain this customer's fields. Customer rules OVERRIDE the base "
+              "policy whenever their 'Applies when' condition holds.", ""]
+    if not custom:
+        lines += ["(none yet)", ""]
+    for u in custom:
+        lines += _render_unit(u)
+    lines += ["## Base triage policy (generic, applies to every customer)", ""]
+    for u in base:
+        lines += _render_unit(u)
     return "\n".join(lines)
