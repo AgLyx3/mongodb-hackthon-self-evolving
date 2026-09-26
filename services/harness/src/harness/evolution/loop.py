@@ -17,18 +17,27 @@ from harness.config import get_settings
 from harness.core.base_harness import base_units
 from harness.core.conditions import Clause, Condition
 from harness.core.fde import KeySignal, decide, judge_unit
-from harness.core.kernel import KernelError, Proposal, promote
+from harness.core.kernel import FdeDecision, KernelError, Proposal, promote, unit_edit_distance
 from harness.core.units import HarnessVersion, Unit, make_version
 from harness.evolution.evaluate import CaseResult, glossary, load_cases, run_eval
 from harness.evolution.gates import backtest, static_checks
 from harness.evolution.investigator import investigate
-from harness.evolution.proposer import propose
+from harness.datagen.registry import module_for
+from harness.evolution.proposer import propose, revise
 
 log = logging.getLogger(__name__)
 PROBE_BUDGET = 24
 
 
+def canary(signal_id: str) -> str:
+    import hashlib
+
+    return "KEY-" + hashlib.sha256(signal_id.encode()).hexdigest()[:8]
+
+
 async def answer_key(customer: str) -> tuple[list[KeySignal], list[dict[str, Any]]]:
+    """Answer key for the simulated FDE. Each description carries a canary token so
+    any leak of answer-key text into FDE output or the harness is detectable."""
     key = []
     async for s in eval_db()["answer_key"].find({"customer": customer}):
         cond = (Condition(all_of=tuple(Clause(**c) for c in s["condition"]["all_of"]))
@@ -36,7 +45,7 @@ async def answer_key(customer: str) -> tuple[list[KeySignal], list[dict[str, Any
         key.append(KeySignal(signal_id=s["signal_id"], kind=s["kind"], condition=cond,
                              disposition=s.get("disposition"), field=s.get("field"),
                              meaning_keywords=tuple(s.get("meaning_keywords") or ()),
-                             description=s["description"]))
+                             description=f"{s['description']} [{canary(s['signal_id'])}]"))
     recs = [d["record"] async for d in app_db()["cases"].find({"customer": customer},
                                                                {"record": 1})]
     return key, recs
@@ -109,12 +118,16 @@ async def score_report(customer: str, units: list[Unit], version: str, model: st
 
 
 async def run_customer(customer: str, batches: int = 3, *, use_priors: bool = True,
-                       ablation_batch: int | None = 3) -> dict[str, Any]:
+                       ablation_batch: int | None = 3, fde_mode: str = "hints",
+                       fde_noise: float = 0.0, fde_seed: int = 0) -> dict[str, Any]:
     s = get_settings()
+    fde = {"mode": fde_mode, "noise": fde_noise, "seed": fde_seed,
+           "rubric": getattr(module_for(customer), "presentation_rubric", None)}
     model = s.runtime_model
     ev = eval_db()
     await reset_customer_run(customer)
-    for coll in ("report_scores", "batch_reports", "gate_private", "fde_matches"):
+    for coll in ("report_scores", "batch_reports", "gate_private", "fde_matches", "leak_checks",
+                 "uptake"):
         await ev[coll].delete_many({"customer": customer})
     gl = await glossary(customer)
     key, all_records = await answer_key(customer)
@@ -158,9 +171,14 @@ async def run_customer(customer: str, batches: int = 3, *, use_priors: bool = Tr
         if ablation_batch == t:
             await _ablation(customer, t, units, failures, revealed)
 
+        labels_by_id = {r.case_id: r.label for r in inc}
+        visible = [(c["_id"], c["record"], labels_by_id[c["_id"]]) for c in replay]
         proposals, _recalled = await propose(
             customer=customer, batch=t, parent_version=version.version_hash, live=units,
             findings=findings)
+        if ablation_batch == t:
+            await _uptake_ablation(customer, t, version, units, findings, proposals, key,
+                                   all_records, visible, fde)
         promoted_ids: list[str] = []
         for p in proposals:
             if p.parent_version != version.version_hash:
@@ -175,7 +193,7 @@ async def run_customer(customer: str, batches: int = 3, *, use_priors: bool = Tr
             units, version, promoted, incumbent = await _review(
                 p, units, version, customer=customer, gl=gl, key=key, records=all_records,
                 replay=replay, holdout=holdout, incumbent=incumbent, noise=noise_cases,
-                model=model, batch=t)
+                model=model, batch=t, fde=fde, visible=visible)
             if promoted:
                 promoted_ids.append(p.proposal_id)
                 await score_report(customer, units, version.version_hash, model, t, report)
@@ -194,6 +212,7 @@ async def run_customer(customer: str, batches: int = 3, *, use_priors: bool = Tr
             "spent_usd": await spent_usd(), "at": datetime.now(UTC)})
         log.info("%s batch %d done: version %s, report %.0f%%", customer, t,
                  version.version_hash, 100 * (last["acc"] if last else 0))
+    await _ladder_summary(customer, fde, version.version_hash)
     return {"customer": customer, "final_version": version.version_hash}
 
 
@@ -213,6 +232,8 @@ async def _review(
     gl: dict[str, str], key: list[KeySignal], records: list[dict[str, Any]],
     replay: list[dict[str, Any]], holdout: list[dict[str, Any]],
     incumbent: dict[str, CaseResult], noise: int, model: str, batch: int,
+    fde: dict[str, Any], visible: list[tuple[str, dict[str, Any], str]],
+    attempt: int = 0, prev_unit: Unit | None = None,
 ) -> tuple[list[Unit], HarnessVersion, bool, dict[str, CaseResult]]:
     db, ev = app_db(), eval_db()
 
@@ -253,12 +274,26 @@ async def _review(
                    len(rep.replay_fixed), len(rep.replay_broken)))
         return units, version, False, incumbent
 
-    decision, sig = decide(p, units, key, records)
+    if fde["mode"] == "none":
+        # Ladder baseline: no reviewer; anything that passes the gates goes live.
+        decision = FdeDecision(proposal_id=p.proposal_id, fde_id="auto:no-fde",
+                               action="accept", reason_tag="correct",
+                               rationale="Auto-accepted: passed all gates (no-FDE baseline).")
+        sig = matched
+    else:
+        decision, sig = decide(p, units, key, records, fde["rubric"], mode=fde["mode"],
+                               visible=visible, allow_revise=attempt == 0,
+                               noise=fde["noise"], seed=fde["seed"])
+    await _leak_check(customer, batch, p.proposal_id, decision)
     await ev["fde_matches"].update_one({"proposal_id": p.proposal_id},
                                        {"$set": {"signal": sig, "stage": "fde"}})
     final_unit = decision.final_unit if decision.action == "edit" else p.change.add
     doc = {"customer": customer, "batch": batch, **decision.model_dump(mode="json"),
-           "final_scope": _fmt_scope(final_unit), "promoted": False, "at": datetime.now(UTC)}
+           "final_scope": _fmt_scope(final_unit), "promoted": False, "attempt": attempt,
+           "fde_mode": fde["mode"], "at": datetime.now(UTC)}
+    if prev_unit is not None:
+        # How far the agent's own revision moved (hint-only feedback, no FDE edit).
+        doc["revision_distance"] = unit_edit_distance(prev_unit, p.change.add)
     if decision.action == "edit":
         # The FDE-edited unit goes through the same validity/lint and backtest (decision 7).
         edited = p.model_copy(update={"change": p.change.model_copy(
@@ -300,7 +335,71 @@ async def _review(
         return new_units, new_version, True, new_inc
     await db["fde_decisions"].insert_one(doc)
     await gate("summary", False, f"FDE {decision.action} ({decision.reason_tag})")
+    if decision.action == "revise" and p.change.add is not None:
+        by_id = {cid: (rec, lab) for cid, rec, lab in visible}
+        ce = [{"case_id": c, "record": by_id[c][0], "label": by_id[c][1]}
+              for c in decision.counterexamples if c in by_id]
+        p2 = await revise(original=p, feedback=decision.rationale, counterexamples=ce,
+                          live=units, parent_version=version.version_hash)
+        if p2 is None:
+            await gate("revision", False, "proposer could not produce a revision")
+            return units, version, False, incumbent
+        await gate("revision", True, f"revised by the proposer as {p2.proposal_id}")
+        return await _review(p2, units, version, customer=customer, gl=gl, key=key,
+                             records=records, replay=replay, holdout=holdout,
+                             incumbent=incumbent, noise=noise, model=model, batch=batch,
+                             fde=fde, visible=visible, attempt=1, prev_unit=p.change.add)
     return units, version, False, incumbent
+
+
+async def _leak_check(customer: str, batch: int, proposal_id: str, d: FdeDecision) -> None:
+    """Flag any answer-key text (canary token) in what the FDE sends back."""
+    text = d.rationale + (d.final_unit.text if d.final_unit else "")
+    await eval_db()["leak_checks"].insert_one({
+        "customer": customer, "batch": batch, "proposal_id": proposal_id,
+        "leaked": "KEY-" in text, "fde_id": d.fde_id, "at": datetime.now(UTC)})
+
+
+async def _uptake_ablation(customer: str, batch: int, version: HarnessVersion,
+                           units: list[Unit], findings: list[Any], main: list[Proposal],
+                           key: list[KeySignal], records: list[dict[str, Any]],
+                           visible: list[tuple[str, dict[str, Any], str]],
+                           fde: dict[str, Any]) -> None:
+    """Feedback uptake: first-pass FDE verdicts on the same findings with memory of past
+    FDE decisions (recall) vs without. Nothing from the no-recall arm is promoted."""
+    try:
+        norecall, _ = await propose(customer=customer, batch=batch,
+                                    parent_version=version.version_hash, live=units,
+                                    findings=findings, recall_enabled=False, persist=False)
+    except BudgetExceeded:
+        return
+    rows = []
+    for arm, props in (("recall", main), ("norecall", norecall)):
+        for p in props:
+            d, sig = decide(p, units, key, records, fde["rubric"], mode="hints",
+                            visible=visible, allow_revise=True)
+            rows.append({"customer": customer, "batch": batch, "arm": arm,
+                         "proposal_id": p.proposal_id, "signal": sig, "action": d.action,
+                         "reason": d.reason_tag, "at": datetime.now(UTC)})
+    if rows:
+        await eval_db()["uptake"].insert_many(rows)
+
+
+async def _ladder_summary(customer: str, fde: dict[str, Any], final_version: str) -> None:
+    ev, db = eval_db(), app_db()
+    reports = [r async for r in ev["batch_reports"].find({"customer": customer}).sort("batch", 1)]
+    decs = [d async for d in db["fde_decisions"].find({"customer": customer})]
+    leaks = await ev["leak_checks"].count_documents({"customer": customer, "leaked": True})
+    checks = await ev["leak_checks"].count_documents({"customer": customer})
+    await ev["ladder"].replace_one(
+        {"_id": f"{customer}|{fde['mode']}|{fde['noise']}"},
+        {"_id": f"{customer}|{fde['mode']}|{fde['noise']}", "customer": customer,
+         "mode": fde["mode"], "noise": fde["noise"], "seed": fde["seed"],
+         "final_version": final_version,
+         "report_by_round": [r.get("report_acc") for r in reports],
+         "fde_actions": dict(Counter(d["action"] for d in decs)),
+         "promoted": sum(bool(d.get("promoted")) for d in decs),
+         "leaks": leaks, "leak_checks": checks, "at": datetime.now(UTC)}, upsert=True)
 
 
 async def _ablation(customer: str, batch: int, units: list[Unit],
@@ -328,7 +427,14 @@ async def current_units(customer: str, model: str | None = None) -> list[Unit]:
 
 
 if __name__ == "__main__":
-    import sys
-
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
-    asyncio.run(run_customer(sys.argv[1] if len(sys.argv) > 1 else "bank"))
+    import argparse
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("customer", nargs="?", default="bank")
+    ap.add_argument("--fde-mode", default="hints", choices=["hints", "oracle", "none"])
+    ap.add_argument("--fde-noise", type=float, default=0.0)
+    ap.add_argument("--fde-seed", type=int, default=0)
+    a = ap.parse_args()
+    asyncio.run(run_customer(a.customer, fde_mode=a.fde_mode, fde_noise=a.fde_noise,
+                             fde_seed=a.fde_seed))

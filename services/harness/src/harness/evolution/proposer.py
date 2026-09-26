@@ -139,10 +139,13 @@ def summarize(p: Proposal) -> str:
 
 async def propose(
     *, customer: str, batch: int, parent_version: str, live: list[Unit],
-    findings: list[Finding], max_proposals: int = 3,
+    findings: list[Finding], max_proposals: int = 3, recall_enabled: bool = True,
+    persist: bool = True,
 ) -> tuple[list[Proposal], list[dict[str, Any]]]:
+    """recall_enabled=False and persist=False give the feedback-uptake ablation:
+    same findings, no memory of past FDE decisions, nothing written."""
     s = get_settings()
-    recalled = await recall(customer, findings)
+    recalled = await recall(customer, findings) if recall_enabled else []
     system = PROMPT.read_text().split("-->", 1)[1].strip().format(
         customer=customer, harness=render_harness(live), findings=_findings_text(findings),
         recalled=_recalled_text(recalled), max_proposals=max_proposals)
@@ -152,10 +155,12 @@ async def propose(
     out: list[Proposal] = []
     db = proposer_db()
     for d in drafts.proposals[:max_proposals]:
-        pid = f"{customer}-b{batch}-{uuid.uuid4().hex[:6]}"
+        pid = f"{customer}-b{batch}-{'' if persist else 'norecall-'}{uuid.uuid4().hex[:6]}"
         try:
             change = draft_to_change(customer, d, live)
         except (ValueError, Exception) as e:  # noqa: BLE001 - invalid drafts are logged
+            if not persist:
+                continue
             await db["proposals"].insert_one({
                 "_id": pid, "customer": customer, "batch": batch, "invalid": str(e)[:200],
                 "summary": f"invalid draft: {d.title}", "created_at": datetime.now(UTC)})
@@ -165,8 +170,52 @@ async def propose(
                      falsification_criterion=d.falsification_criterion,
                      evidence_refs=tuple(d.evidence_sources),
                      recalled_proposals=tuple(r["proposal_id"] for r in recalled))
-        await db["proposals"].insert_one({
-            "_id": pid, **p.model_dump(mode="json"), "summary": summarize(p),
-            "recalled": recalled, "created_at": datetime.now(UTC)})
+        if persist:
+            await db["proposals"].insert_one({
+                "_id": pid, **p.model_dump(mode="json"), "summary": summarize(p),
+                "recalled": recalled, "created_at": datetime.now(UTC)})
         out.append(p)
     return out, recalled
+
+
+REVISE_PROMPT = Path(__file__).resolve().parents[1] / "prompts" / "proposer_revise.md"
+
+
+async def revise(
+    *, original: Proposal, feedback: str, counterexamples: list[dict[str, Any]],
+    live: list[Unit], parent_version: str,
+) -> Proposal | None:
+    """One revision attempt after hint-only FDE feedback. Returns None if unusable."""
+    s = get_settings()
+    import json
+
+    ce = "\n".join(f"- {c['case_id']}: correct = {c['label']}; record: {json.dumps(c['record'])}"
+                   for c in counterexamples) or "(none given)"
+    system = REVISE_PROMPT.read_text().split("-->", 1)[1].strip().format(
+        customer=original.customer, harness=render_harness(live), original=summarize(original),
+        feedback=feedback, counterexamples=ce)
+    try:
+        drafts, _, _ = await structured(model=s.proposer_model, system=system, schema=Drafts,
+                                        user="Write the revised proposal.", max_tokens=2000,
+                                        purpose="revise")
+    except Exception:  # noqa: BLE001 - a failed revision is simply no revision
+        return None
+    if not drafts.proposals:
+        return None
+    d = drafts.proposals[0]
+    try:
+        change = draft_to_change(original.customer, d, live)
+    except Exception:  # noqa: BLE001
+        return None
+    pid = f"{original.proposal_id}-r1"
+    p = Proposal(proposal_id=pid, customer=original.customer, batch=original.batch,
+                 parent_version=parent_version, change=change, hypothesis=d.hypothesis,
+                 falsification_criterion=d.falsification_criterion,
+                 evidence_refs=tuple(d.evidence_sources) or original.evidence_refs,
+                 recalled_proposals=original.recalled_proposals)
+    await proposer_db()["proposals"].insert_one({
+        "_id": pid, **p.model_dump(mode="json"), "summary": summarize(p),
+        "revision_of": original.proposal_id, "fde_feedback": feedback,
+        "counterexamples": [c["case_id"] for c in counterexamples],
+        "created_at": datetime.now(UTC)})
+    return p

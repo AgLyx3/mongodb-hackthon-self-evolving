@@ -119,7 +119,7 @@ def test_supersede_cannot_replace_a_correct_rule_for_another_signal():
 
 
 def test_decide_records_edit_distance_for_edits():
-    d, _ = decide(_prop(Change(add=_rule(("a.x", ">=", 5)))), [], [SIG], RECORDS)
+    d, _ = decide(_prop(Change(add=_rule(("a.x", ">=", 5)))), [], [SIG], RECORDS, mode="oracle")
     assert d.action == "edit" and 0 < d.edit_distance < 1
 
 
@@ -127,3 +127,55 @@ def test_simulated_fde_signs_its_decisions():
     from harness.core.fde import FDE_ID
     d, _ = decide(_prop(Change(add=_rule(("a.x", ">=", 5)))), [], [SIG], RECORDS)
     assert d.fde_id == FDE_ID
+
+
+def test_presentation_rubric_can_reject_correct_content_but_not_rescue_wrong():
+    good = _rule(("a.x", ">=", 5), ("a.y", "==", 1))
+    bad = _rule(("a.x", "<", 2), ("a.y", "==", 0))
+    fail = lambda view: (False, "too_conclusive", "no counts")  # noqa: E731
+    ok = lambda view: (True, "", "")  # noqa: E731
+    d1, _ = decide(_prop(Change(add=good)), [], [SIG], RECORDS, presentation_check=fail)
+    d2, _ = decide(_prop(Change(add=good)), [], [SIG], RECORDS, presentation_check=ok)
+    d3, _ = decide(_prop(Change(add=bad)), [], [SIG], RECORDS, presentation_check=ok)
+    assert (d1.action, d1.reason_tag) == ("revise", "presentation")
+    assert "too_conclusive" in d1.rationale
+    assert d2.action == "accept"
+    assert d3.action == "reject" and d3.reason_tag != "presentation"
+
+
+VISIBLE = [(f"c{i:03d}", r, "escalate" if (r["a"]["x"] >= 5 and r["a"]["y"] == 1)
+            else "close_false_positive") for i, r in enumerate(RECORDS)]
+
+
+def test_hints_mode_sends_counterexamples_not_scope():
+    broad = _rule(("a.x", ">=", 5))
+    d, sig = decide(_prop(Change(add=broad)), [], [SIG], RECORDS, visible=VISIBLE)
+    assert (d.action, d.reason_tag, sig) == ("revise", "too_broad", "s1")
+    assert d.final_unit is None and 1 <= len(d.counterexamples) <= 2
+    by = {cid: (r, lab) for cid, r, lab in VISIBLE}
+    for cid in d.counterexamples:  # inside the proposal's scope, outside the signal
+        r, lab = by[cid]
+        assert r["a"]["x"] >= 5 and r["a"]["y"] != 1 and lab != "escalate"
+    assert ">=" not in d.rationale and "a.y" not in d.rationale  # no scope leaked
+
+
+def test_hints_mode_counterexamples_only_from_visible_cases():
+    d, _ = decide(_prop(Change(add=_rule(("a.x", ">=", 5)))), [], [SIG], RECORDS, visible=[])
+    assert d.action == "revise" and d.counterexamples == ()
+
+
+def test_second_attempt_cannot_revise_again():
+    d, _ = decide(_prop(Change(add=_rule(("a.x", ">=", 5)))), [], [SIG], RECORDS,
+                  visible=VISIBLE, allow_revise=False)
+    assert d.action == "reject"
+
+
+def test_noise_is_seeded_and_flips_only_some():
+    props = [_prop(Change(add=_rule(("a.x", ">=", 5), ("a.y", "==", 1)).model_copy(
+        update={"unit_id": f"u{i}"}))) for i in range(200)]
+    runs = [[decide(p, [], [SIG], RECORDS, noise=0.1, seed=7)[0].action for p in props]
+            for _ in range(2)]
+    assert runs[0] == runs[1]
+    flipped = runs[0].count("reject")
+    assert 5 <= flipped <= 40
+    assert all(decide(p, [], [SIG], RECORDS, noise=0.0)[0].action == "accept" for p in props)

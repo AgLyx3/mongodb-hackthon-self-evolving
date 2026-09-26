@@ -16,9 +16,9 @@ from pydantic import BaseModel
 
 from harness.core.units import HarnessVersion, NoOpChange, Unit, apply_change, make_version
 
-FdeAction = Literal["accept", "edit", "reject", "defer"]
+FdeAction = Literal["accept", "edit", "reject", "defer", "revise"]
 ReasonTag = Literal["correct", "too_broad", "too_narrow", "wrong", "unsupported",
-                    "duplicate", "preference", "unsafe"]
+                    "duplicate", "preference", "unsafe", "presentation"]
 
 
 class Change(BaseModel, frozen=True):
@@ -48,6 +48,9 @@ class FdeDecision(BaseModel, frozen=True):
     rationale: str
     final_unit: Unit | None = None  # for edit: what the FDE actually approved
     edit_distance: float = 0.0  # 0 = accepted as-is, ~1 = rewritten
+    # Hint-only feedback: already-revealed cases the proposal gets wrong. Never
+    # thresholds or rule text (research/notes/simulated_personas.md).
+    counterexamples: tuple[str, ...] = ()
 
 
 class KernelError(Exception):
