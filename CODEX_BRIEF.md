@@ -41,6 +41,22 @@ def presentation_rubric(proposal: dict) -> tuple[bool, str, str]   # optional, s
   - **Oracle:** answers for 3–5 field/code keywords. Unknown questions get no answer.
 - **Labels:** from QC review or from outcomes (your choice). If there's no QC sheet, `history_labels` are treated as observed outcomes.
 
+## Difficulty requirements (the existing customers saturate; yours must not)
+
+On the builder's customers, once the harness holds the right rules, a mid-tier and a strong model both score 100%. Labels were pure field lookups, and over-broad rules cost nothing. Design yours so that correct rules alone don't reach 100%, and so that model capability and rule precision both matter:
+
+- **Label noise:** 5–10% of *history* labels (QC or outcomes) disagree with `classify()`, as reviewers do. Keep `batch*`/`holdout`/`report` labels clean (those are ground truth). The investigator must see through noisy history.
+- **Free-text decisive cases:** for 10–15% of eval cases, the deciding information is only in a free-text field (e.g. `alert.memo`, `player.support_note`) written in natural language with paraphrase. No structured field carries it. At least one planted signal must be of this kind.
+  - Encode it as `kind="definition"`, with `field` = the free-text field path (listed in `record_schema`), `meaning_keywords` = 2–4 lowercase words a correct explanation would contain, and `description` = the correct reading.
+  - `classify()` still decides these cases, from your own hidden generation variables.
+- **Interacting rules:** at least one exception to an exception (rule A overrides the base; rule B overrides A in a sub-case), and precedence must matter on ≥ 3 holdout and ≥ 3 report cases.
+- **Over-breadth must hurt:** for every rule signal, include near-miss cases (just outside its scope) whose correct label differs from the signal's disposition *and* from what a plausible over-broad version would give. Target ≥ 2 near-miss cases per signal in holdout and in report.
+- **Near-threshold cases:** values at, just above and just below each numeric threshold.
+- **Distractor fields:** at least 6 plausible fields that never matter, including one strongly correlated with a signal in `history` only (a spurious correlate).
+- **Audit 10 (add to your tests):**
+  - a hand-written "over-broad" variant of each rule signal (drop one clause) must change the correct label on ≥ 2 holdout cases;
+  - the free-text-only cases must have no structured field that alone predicts their label (check with a one-field decision stump over the history split).
+
 ## Audits (write these as tests; all must pass)
 
 1. `build()` is deterministic, including chunks and `history_labels`.
