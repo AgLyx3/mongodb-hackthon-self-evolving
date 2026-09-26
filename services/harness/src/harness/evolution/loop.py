@@ -129,7 +129,8 @@ async def run_customer(customer: str, batches: int = 3, *, use_priors: bool = Tr
     model = s.runtime_model
     ev = eval_db()
     run_id = await start_run(customer, {"fde_mode": fde_mode, "fde_noise": fde_noise,
-                                        "fde_seed": fde_seed, "runtime_model": model})
+                                        "fde_seed": fde_seed, "runtime_model": model,
+                                        "triage_runtime": s.triage_runtime})
     fde["run_id"] = run_id
     log.info("%s run %s started", customer, run_id)
     gl = await glossary(customer)

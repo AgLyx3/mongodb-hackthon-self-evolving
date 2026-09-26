@@ -1,8 +1,8 @@
 """Runtime triage agent: one structured LLM call per alert (decision 9: case-only).
 
 The system prompt is the rendered harness, which is the part that evolves.
-Deep Agents is used for the investigator; triage runs thousands of times, so
-it is a lean single call to keep the $10 budget (TASKS.md, 2026-09-26).
+This is the "single" runtime (settings.triage_runtime). The Deep Agents runtime,
+with case-scoped tools and a MongoDB checkpointer, is triage_deep.py.
 """
 
 from __future__ import annotations
@@ -47,8 +47,11 @@ def user_prompt(record: dict[str, Any], glossary: dict[str, str]) -> str:
 
 async def triage(
     units: list[Unit], record: dict[str, Any], glossary: dict[str, str], *, model: str,
-    rep: int = 0,
+    rep: int = 0, case_id: str = "", tag: str = "", version: str = "",
 ) -> tuple[TriageResult, float, bool]:
+    """(result, cost_usd, cache_hit). case_id/tag/version are accepted for signature
+    parity with triage_deep.triage (which uses them for its checkpoint thread id)."""
+    del case_id, tag, version
     return await structured(model=model, system=system_prompt(units),
                             user=user_prompt(record, glossary), schema=TriageResult,
                             max_tokens=3000, rep=rep, purpose="triage")

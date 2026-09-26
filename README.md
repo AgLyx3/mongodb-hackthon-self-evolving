@@ -49,6 +49,7 @@ For each customer, per batch of alerts (compliance alert triage: `close_false_po
 | **Run history, never deleted** | `runs`, `archive_*` | Before a new run, the previous run's documents are moved into `archive_<collection>` under its `run_id`. Every experiment stays inspectable. |
 | **Database-level access control for agent safety** | custom role `fdeProposer`, two databases | The proposer connects as a DB user that can **only insert into `proposals`**. It cannot write versions, pointers or gates, so an agent can't promote its own change even by mistake. Verified: writes elsewhere return error 13. |
 | **Separate database for the eval** | `fde_eval` (`answer_key`, `case_labels`, `oracle`, private scores) | The proposer's DB user has no role on `fde_eval`, so holdout labels and the answer key are unreadable by the agents being evaluated. |
+| **Agent run state: LangGraph MongoDB checkpointer** (`langgraph-checkpoint-mongodb`) | `triage_checkpoints`, `triage_checkpoint_writes` | With `TRIAGE_RUNTIME=deep`, every triage run checkpoints its full state (messages, tool calls, structured result) to Atlas under thread `{tag}:{case_id}:{harness_version}:{rep}`, so every decision can be inspected step by step; a finished thread found there is reused without a new model call (a failed attempt is retried on a fresh thread, keeping its partial state). |
 | **Cache and budget ledger** | `llm_cache`, `llm_spend`, `llm_calls` | LLM responses are cached by input hash, and an atomic `$inc` ledger enforces a hard spend stop. |
 | **Async PyMongo, indexes in code** | `adapters/mongo/` | Async driver throughout. Regular and search indexes are declared in code and created idempotently. |
 
@@ -60,7 +61,7 @@ For each customer, per batch of alerts (compliance alert triage: `close_false_po
 | LLMs | **OpenRouter**. `openai/gpt-5.6-luna` runs triage, investigator, proposer and lesson writer; `anthropic/claude-sonnet-5` is the strong-model baseline. Direct `httpx` client with JSON-schema structured output. |
 | Backend | Python 3.12, **FastAPI**, Pydantic v2, pydantic-settings, `uv`, pytest, ruff |
 | Frontend | **Next.js 16** (App Router, server components), React 19, TypeScript, Tailwind CSS 4, Recharts, `pnpm` |
-| Agents | Small custom tool-calling loop (investigator) plus structured single calls (triage, proposer). No agent framework at runtime. |
+| Agents | **Triage agent (the deployed product): LangChain Deep Agents** (`deepagents` 0.7.19) via `langchain-openai` against OpenRouter, with the evolving harness as its instructions, two case-scoped tools (`list_record_sections`, `get_record_section`), and Deep Agents' built-in filesystem/subagent/summarization tools switched off. Selected with `TRIAGE_RUNTIME=deep`; the default is still `single` (one structured call, same output schema). Investigator: small custom tool-calling loop. Proposer: structured single calls. |
 | Eval independence | **OpenAI Codex CLI** wrote the held-out customer as a separate agent; the builder never read it. |
 | Built with | Claude Code (Opus 5.5) with subagents for research, adversarial review (`evolution-safety`) and test mutation audits (`check-auditor`) |
 

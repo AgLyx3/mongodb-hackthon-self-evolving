@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -20,6 +21,10 @@ class Settings(BaseSettings):
 
     openrouter_api_key: SecretStr | None = None
     llm_spend_limit_usd: float = 9.0
+    # Which triage runtime evaluate.run_eval uses: "single" = one structured call
+    # (adapters/runtime/triage.py); "deep" = Deep Agents with case-scoped tools and a
+    # MongoDB checkpointer (adapters/runtime/triage_deep.py). Env TRIAGE_RUNTIME.
+    triage_runtime: Literal["single", "deep"] = "single"
     voyage_api_key: SecretStr | None = None
 
     # Model IDs live here and nowhere else. Chosen at build time from the live
