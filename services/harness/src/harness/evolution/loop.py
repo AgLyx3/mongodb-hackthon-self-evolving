@@ -12,7 +12,7 @@ from typing import Any
 
 from harness.adapters.llm.openrouter import BudgetExceeded, spent_usd
 from harness.adapters.mongo.client import app_db, eval_db
-from harness.adapters.mongo.store import load_units, reset_customer_run, save_version, set_live
+from harness.adapters.mongo.store import finish_run, load_units, save_version, set_live, start_run
 from harness.config import get_settings
 from harness.core.base_harness import base_units
 from harness.core.conditions import Clause, Condition
@@ -125,10 +125,10 @@ async def run_customer(customer: str, batches: int = 3, *, use_priors: bool = Tr
            "rubric": getattr(module_for(customer), "presentation_rubric", None)}
     model = s.runtime_model
     ev = eval_db()
-    await reset_customer_run(customer)
-    for coll in ("report_scores", "batch_reports", "gate_private", "fde_matches", "leak_checks",
-                 "uptake"):
-        await ev[coll].delete_many({"customer": customer})
+    run_id = await start_run(customer, {"fde_mode": fde_mode, "fde_noise": fde_noise,
+                                        "fde_seed": fde_seed, "runtime_model": model})
+    fde["run_id"] = run_id
+    log.info("%s run %s started", customer, run_id)
     gl = await glossary(customer)
     key, all_records = await answer_key(customer)
     holdout = await load_cases(customer, ["holdout"])
@@ -213,6 +213,7 @@ async def run_customer(customer: str, batches: int = 3, *, use_priors: bool = Tr
         log.info("%s batch %d done: version %s, report %.0f%%", customer, t,
                  version.version_hash, 100 * (last["acc"] if last else 0))
     await _ladder_summary(customer, fde, version.version_hash)
+    await finish_run(run_id, version.version_hash)
     return {"customer": customer, "final_version": version.version_hash}
 
 
@@ -395,7 +396,7 @@ async def _ladder_summary(customer: str, fde: dict[str, Any], final_version: str
         {"_id": f"{customer}|{fde['mode']}|{fde['noise']}"},
         {"_id": f"{customer}|{fde['mode']}|{fde['noise']}", "customer": customer,
          "mode": fde["mode"], "noise": fde["noise"], "seed": fde["seed"],
-         "final_version": final_version,
+         "run_id": fde.get("run_id"), "final_version": final_version,
          "report_by_round": [r.get("report_acc") for r in reports],
          "fde_actions": dict(Counter(d["action"] for d in decs)),
          "promoted": sum(bool(d.get("promoted")) for d in decs),

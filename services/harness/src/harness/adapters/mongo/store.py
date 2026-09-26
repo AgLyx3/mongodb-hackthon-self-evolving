@@ -79,13 +79,55 @@ async def revert(customer: str, model: str, to_version: str, *, reason: str,
                    edge="reverts")
 
 
-async def reset_customer_run(customer: str) -> None:
-    """Clear evolution state for a fresh run (keeps data, cache, and spend ledger)."""
-    db = app_db()
-    q: dict[str, Any] = {"customer": customer}
-    for coll in ("proposals", "gate_results", "fde_decisions", "probes", "findings",
-                 "pointer_events", "batch_reports", "source_usefulness"):
-        await db[coll].delete_many(q)
-    await db["outcomes"].delete_many({"customer": customer, "batch": {"$gt": 0}})
-    await db["traces"].delete_many({"customer": customer, "tag": {"$ne": "calibration"}})
-    await db["live_pointers"].delete_many(q)
+# Per-run collections. Before a new run starts, the previous run's documents are
+# MOVED to archive_<coll> tagged with its run_id (never deleted), so every run's
+# proposals, decisions and transcripts stay inspectable.
+RUN_COLLS_APP: dict[str, dict[str, Any]] = {
+    "proposals": {}, "gate_results": {}, "fde_decisions": {}, "probes": {}, "findings": {},
+    "pointer_events": {}, "live_pointers": {},
+    "outcomes": {"batch": {"$gt": 0}},
+    "traces": {"tag": {"$ne": "calibration"}},
+}
+RUN_COLLS_EVAL = ("report_scores", "batch_reports", "gate_private", "fde_matches",
+                  "leak_checks", "uptake", "traces_private")
+
+
+async def _archive(db: Any, coll: str, q: dict[str, Any], run_id: str) -> int:
+    docs = [d async for d in db[coll].find(q)]
+    if not docs:
+        return 0
+    for d in docs:
+        d["orig_id"] = d.pop("_id")
+        d["_id"] = f"{run_id}:{d['orig_id']}"
+        d["run_id"] = run_id
+    await db[f"archive_{coll}"].insert_many(docs, ordered=False)
+    await db[coll].delete_many({"_id": {"$in": [d["orig_id"] for d in docs]}})
+    return len(docs)
+
+
+async def start_run(customer: str, config: dict[str, Any]) -> str:
+    """Archive the customer's previous run (if any) and register a new one."""
+    from harness.adapters.mongo.client import eval_db
+
+    db, ev = app_db(), eval_db()
+    prev = await db["runs"].find_one({"customer": customer}, sort=[("started_at", -1)])
+    prev_id = prev["_id"] if prev else f"{customer}-legacy"
+    moved = 0
+    for coll, extra in RUN_COLLS_APP.items():
+        moved += await _archive(db, coll, {"customer": customer, **extra}, prev_id)
+    for coll in RUN_COLLS_EVAL:
+        moved += await _archive(ev, coll, {"customer": customer}, prev_id)
+    if prev:
+        await db["runs"].update_one({"_id": prev_id},
+                                    {"$set": {"archived_docs": moved, "status":
+                                              prev.get("status", "archived")}})
+    run_id = f"{customer}-{_now().strftime('%Y%m%dT%H%M%S')}-{config.get('fde_mode', 'x')}"
+    await db["runs"].insert_one({"_id": run_id, "customer": customer, **config,
+                                 "status": "running", "started_at": _now()})
+    return run_id
+
+
+async def finish_run(run_id: str, final_version: str) -> None:
+    await app_db()["runs"].update_one(
+        {"_id": run_id}, {"$set": {"status": "finished", "final_version": final_version,
+                                   "finished_at": _now()}})
