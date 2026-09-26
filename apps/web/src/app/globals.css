@@ -1,0 +1,43 @@
+@import "tailwindcss";
+@import "../../styles/tokens.css";
+@import "../../styles/themes/default.css";
+
+html,
+body {
+  background: var(--color-surface);
+  color: var(--color-content);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
+}
+
+:focus-visible {
+  outline: 1px solid var(--color-border-strong);
+  outline-offset: 2px;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.muted {
+  color: var(--color-content-muted);
+}
+
+.prose-block {
+  max-width: var(--measure-prose);
+  line-height: var(--leading-prose);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}

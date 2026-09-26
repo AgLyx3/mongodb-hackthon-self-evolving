@@ -1,0 +1,32 @@
+/* Default theme. Derived from base (cool gray), accent (blue), contrast (high) in OKLCH.
+   The only file allowed to hold literal color values. */
+:root,
+[data-theme="dark"] {
+  --color-surface: oklch(0.17 0.006 260);
+  --color-surface-raised: oklch(0.21 0.007 260);
+  --color-surface-sunken: oklch(0.14 0.006 260);
+  --color-content: oklch(0.94 0.004 260);
+  --color-content-muted: oklch(0.72 0.01 260);
+  --color-content-subtle: oklch(0.55 0.012 260);
+  --color-border: oklch(0.29 0.008 260);
+  --color-border-strong: oklch(0.45 0.012 260);
+
+  --color-primary: oklch(0.68 0.15 255);
+  --color-primary-hover: oklch(0.74 0.14 255);
+  --color-primary-fg: oklch(0.16 0.02 255);
+  --color-secondary: oklch(0.3 0.01 260);
+  --color-secondary-hover: oklch(0.35 0.01 260);
+  --color-secondary-fg: oklch(0.94 0.004 260);
+  --color-neutral: oklch(0.26 0.006 260);
+  --color-neutral-hover: oklch(0.3 0.006 260);
+  --color-neutral-fg: oklch(0.85 0.006 260);
+  --color-alarm: oklch(0.66 0.19 25);
+  --color-alarm-hover: oklch(0.71 0.18 25);
+  --color-alarm-fg: oklch(0.16 0.03 25);
+  --color-warning: oklch(0.8 0.14 80);
+  --color-warning-hover: oklch(0.84 0.13 80);
+  --color-warning-fg: oklch(0.2 0.04 80);
+  --color-success: oklch(0.74 0.15 150);
+  --color-success-hover: oklch(0.79 0.14 150);
+  --color-success-fg: oklch(0.18 0.04 150);
+}

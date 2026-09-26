@@ -167,7 +167,9 @@ enforcement doesn't reach.
 ## Git
 
 Branch per unit of work. Imperative commit subjects, one logical change per
-commit. Commit and push only when asked.
+commit. On a non-`main` working branch, commit without asking each time a
+`TASKS.md` item is done and its tests pass; that gives a checkpoint to roll
+back to. Never commit secrets, `.env`, or generated data. Push only when asked.
 
 ## Where the rest of the context lives
 

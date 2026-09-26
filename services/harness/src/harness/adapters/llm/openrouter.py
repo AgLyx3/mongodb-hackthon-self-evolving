@@ -59,8 +59,12 @@ def strict_schema(model: type[BaseModel]) -> dict[str, Any]:
             if node.get("type") == "object" and "properties" in node:
                 node["additionalProperties"] = False
                 node["required"] = list(node["properties"])
-            node.pop("default", None)
-            node.pop("title", None)
+            # Drop schema metadata, but never a *property* that happens to be named
+            # "title" or "default" (those live inside the "properties" mapping).
+            if not isinstance(node.get("title"), dict):
+                node.pop("title", None)
+            if not isinstance(node.get("default"), dict):
+                node.pop("default", None)
             for v in node.values():
                 fix(v)
         elif isinstance(node, list):
@@ -143,6 +147,29 @@ async def structured(
         {"_id": key}, {"$set": {"parsed": parsed.model_dump(mode="json"), "model": model}},
         upsert=True)
     return parsed, cost, False
+
+
+async def chat_tools(
+    *, model: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]],
+    max_tokens: int = 1500, purpose: str = "",
+) -> dict[str, Any]:
+    """One tool-calling turn (not cached: agent loops depend on live tool results).
+    Returns the assistant message dict."""
+    limit = get_settings().llm_spend_limit_usd
+    if await spent_usd() >= limit:
+        raise BudgetExceeded(f"LLM spend reached ${limit:.2f}")
+    data = await _call({"model": model, "max_tokens": max_tokens, "temperature": 0.2,
+                        "messages": messages, "tools": tools})
+    usage = data.get("usage") or {}
+    cost = float(usage.get("cost") or 0.0)
+    db = app_db()
+    await db["llm_spend"].update_one(
+        {"_id": "ledger"}, {"$inc": {"usd": cost, "calls": 1}}, upsert=True)
+    await db["llm_calls"].insert_one({
+        "model": model, "purpose": purpose, "cost": cost,
+        "in_tokens": usage.get("prompt_tokens"), "out_tokens": usage.get("completion_tokens")})
+    msg: dict[str, Any] = data["choices"][0]["message"]
+    return msg
 
 
 def _strip_fences(text: str) -> str:
