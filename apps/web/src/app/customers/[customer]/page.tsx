@@ -3,6 +3,8 @@ import { api } from "@/lib/api";
 import { AccuracyChart } from "./AccuracyChart";
 import { ComparisonTable } from "./ComparisonTable";
 import { Kpis } from "./Kpis";
+import { LadderTable } from "./LadderTable";
+import { ProbeTimeline } from "./ProbeTimeline";
 import { ProposalList } from "./ProposalList";
 import { Section } from "./Section";
 import { SourceHeatmap } from "./SourceHeatmap";
@@ -16,7 +18,8 @@ export default async function CustomerPage({ params }: { params: Promise<{ custo
   if (customer !== "bank" && customer !== "fintech") notFound();
   let data;
   try {
-    const [customers, timeline, proposals, sources, metrics, harness, comparison] = await Promise.all([
+    const [customers, timeline, proposals, sources, metrics, harness, comparison, probes, ladder] =
+      await Promise.all([
       api.customers(),
       api.timeline(customer),
       api.proposals(customer),
@@ -24,8 +27,10 @@ export default async function CustomerPage({ params }: { params: Promise<{ custo
       api.metrics(customer),
       api.harness(customer),
       api.comparison(customer),
+      api.probes(customer),
+      api.ladder(customer),
     ]);
-    data = { customers, timeline, proposals, sources, metrics, harness, comparison };
+    data = { customers, timeline, proposals, sources, metrics, harness, comparison, probes, ladder };
   } catch {
     return (
       <p>
@@ -81,6 +86,13 @@ export default async function CustomerPage({ params }: { params: Promise<{ custo
       </Section>
 
       <Section
+        title="How much does the reviewer carry?"
+        caption="Same loop, same data, different simulated FDE. If only the full-answer-key reviewer does well, the reviewer is doing the work. Leaks: answer-key canary tokens found in anything the FDE sent back."
+      >
+        <LadderTable rows={data.ladder} />
+      </Section>
+
+      <Section
         title="Model × harness on the report cases"
         caption="Does an evolved harness let a cheap model match a strong one? And does a harness evolved on one model's trajectories carry over to another?"
       >
@@ -96,6 +108,13 @@ export default async function CustomerPage({ params }: { params: Promise<{ custo
 
       <Section title="Version history" caption="Immutable, content-hashed versions. Only FDE actions move the live pointer.">
         <VersionList versions={data.timeline.versions} />
+      </Section>
+
+      <Section
+        title="Investigation timeline"
+        caption="Every probe the investigator made, in order: the tool, what it asked, which source answered, and what came back."
+      >
+        <ProbeTimeline probes={data.probes} />
       </Section>
 
       <Section

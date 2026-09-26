@@ -59,3 +59,15 @@ async def metrics(customer: str) -> dict[str, Any]:
 async def comparison(customer: str) -> dict[str, Any]:
     _check(customer)
     return await views.comparison(customer)
+
+
+@app.get("/api/customers/{customer}/probes")
+async def probes(customer: str) -> list[dict[str, Any]]:
+    _check(customer)
+    return await views.probes(customer)
+
+
+@app.get("/api/customers/{customer}/ladder")
+async def ladder(customer: str) -> list[dict[str, Any]]:
+    _check(customer)
+    return await views.ladder(customer)

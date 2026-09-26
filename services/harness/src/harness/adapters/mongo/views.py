@@ -218,3 +218,18 @@ async def _decoy_spend(customer: str) -> dict[str, Any]:
 async def comparison(customer: str) -> dict[str, Any]:
     doc = await app_db()["comparisons"].find_one({"_id": customer})
     return _clean(doc) if doc else {"rows": []}
+
+
+async def probes(customer: str) -> list[dict[str, Any]]:
+    """Every investigator probe in order, grouped client-side by round and run."""
+    out = []
+    async for pr in app_db()["probes"].find({"customer": customer}).sort("_id", 1):
+        pr = _clean(pr)
+        out.append({"round": pr["batch"], "run": pr["run_tag"], "tool": pr["tool"],
+                    "args": pr["args"], "sources": pr["sources"], "cost": pr["cost"],
+                    "preview": pr["preview"]})
+    return out
+
+
+async def ladder(customer: str) -> list[dict[str, Any]]:
+    return [_clean(r) async for r in eval_db()["ladder"].find({"customer": customer})]

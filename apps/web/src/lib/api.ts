@@ -148,7 +148,28 @@ export type ComparisonRow = {
 };
 export type Comparison = { rows: ComparisonRow[]; at?: string };
 
+export type Probe = {
+  round: number;
+  run: string;
+  tool: string;
+  args: Record<string, unknown>;
+  sources: string[];
+  cost: number;
+  preview: string;
+};
+export type LadderRow = {
+  id: string;
+  mode: string;
+  noise: number;
+  report_by_round: (number | null)[];
+  promoted: number;
+  leaks: number;
+  leak_checks: number;
+};
+
 export const api = {
+  probes: (c: string) => get<Probe[]>(`/api/customers/${c}/probes`),
+  ladder: (c: string) => get<LadderRow[]>(`/api/customers/${c}/ladder`),
   comparison: (c: string) => get<Comparison>(`/api/customers/${c}/comparison`),
   customers: () => get<Customer[]>("/api/customers"),
   timeline: (c: string) => get<Timeline>(`/api/customers/${c}/timeline`),
