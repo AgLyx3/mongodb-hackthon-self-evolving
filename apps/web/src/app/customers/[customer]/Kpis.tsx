@@ -14,7 +14,7 @@ export function Kpis({ metrics, strongBaseline }: KpisProps) {
   const noisePts = metrics.noise_cases !== null ? (metrics.noise_cases / 40) * 100 : null;
   const tiles: { label: string; value: string; note: string }[] = [
     {
-      label: "Holdout accuracy",
+      label: "Accuracy on untouched report cases",
       value: `${pct(first)} → ${pct(last)}`,
       note:
         delta === null
@@ -26,7 +26,7 @@ export function Kpis({ metrics, strongBaseline }: KpisProps) {
     {
       label: "Strong model, base harness",
       value: pct(strongBaseline),
-      note: "calibration: same holdout, no evolution",
+      note: "same report cases, generic harness",
     },
     {
       label: "Planted signals learned",

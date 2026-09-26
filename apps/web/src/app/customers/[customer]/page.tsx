@@ -60,14 +60,14 @@ export default async function CustomerPage({ params }: { params: Promise<{ custo
       <Kpis metrics={data.metrics} strongBaseline={strong} />
 
       <Section
-        title="Holdout accuracy by version"
-        caption={`Shaded: noise band (±${noisePts.toFixed(1)} pts from 3 re-runs of the unchanged harness). Dashed: a strong model on the base harness.`}
+        title="Accuracy by version (report cases)"
+        caption={`Measured on 40 report cases that no gate or decision ever sees. Shaded: noise band (±${noisePts.toFixed(1)} pts, from 3 re-runs of the unchanged harness on the gate's holdout). Dashed: a strong model on the base harness.`}
       >
         <AccuracyChart points={points} noisePts={noisePts} strongBaseline={strong} />
       </Section>
 
       <Section
-        title="Model × harness on the holdout"
+        title="Model × harness on the report cases"
         caption="Does an evolved harness let a cheap model match a strong one? And does a harness evolved on one model's trajectories carry over to another?"
       >
         <ComparisonTable comparison={data.comparison} />

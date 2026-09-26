@@ -31,7 +31,7 @@ export function AccuracyChart({ points, noisePts, strongBaseline }: AccuracyChar
     <div
       style={{ height: 260, width: "100%" }}
       role="img"
-      aria-label="Holdout accuracy by harness version, with noise band"
+      aria-label="Accuracy by harness version on report cases, with noise band"
     >
       <ResponsiveContainer>
         <ComposedChart data={data} margin={{ top: 8, right: 24, bottom: 8, left: 0 }}>
@@ -57,7 +57,7 @@ export function AccuracyChart({ points, noisePts, strongBaseline }: AccuracyChar
             stroke="var(--color-primary)"
             strokeWidth={2}
             dot
-            name="holdout accuracy %"
+            name="report accuracy %"
             isAnimationActive={false}
           />
           {strongBaseline !== null ? (

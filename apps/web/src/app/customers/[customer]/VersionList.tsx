@@ -23,7 +23,7 @@ export function VersionList({ versions }: { versions: VersionRow[] }) {
           <th>Batch</th>
           <th>Change</th>
           <th>Why</th>
-          <th className="num">Holdout</th>
+          <th className="num">Report acc.</th>
         </tr>
       </thead>
       <tbody>
