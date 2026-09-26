@@ -252,6 +252,21 @@ async def _review(
     reason = static_checks(p, units, gl)
     if reason:
         await gate("static", False, reason)
+        fixable = ("unknown fields" in reason or "not in the record schema" in reason)
+        if fixable and attempt == 0 and p.change.add is not None:
+            # A correctable mistake (misnamed field): give the valid field list and one
+            # retry, like the FDE's hint path. Nothing about the answer is revealed.
+            feedback = (f"Automated validity check: {reason}. Valid record fields are: "
+                        f"{', '.join(sorted(gl))}.")
+            p2 = await revise(original=p, feedback=feedback, counterexamples=[], live=units,
+                              parent_version=version.version_hash)
+            if p2 is not None:
+                await gate("revision", True, f"revised after validity feedback as {p2.proposal_id}")
+                return await _review(p2, units, version, customer=customer, gl=gl, key=key,
+                                     records=records, replay=replay, holdout=holdout,
+                                     incumbent=incumbent, noise=noise, model=model,
+                                     batch=batch, fde=fde, visible=visible, attempt=1,
+                                     prev_unit=p.change.add)
         await gate("summary", False, reason)
         return units, version, False, incumbent
     await gate("static", True, "valid, lint clean")

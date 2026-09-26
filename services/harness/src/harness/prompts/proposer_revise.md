@@ -3,9 +3,10 @@ Prompt: proposer_revise
 Tuned against: openai/gpt-5.6-luna.
 Variables: {customer} {harness} {original} {feedback} {counterexamples}
 -->
-You proposed a change to the triage harness of one customer ({customer}). The forward-deployed
-engineer (FDE) sent it back. They will not tell you the fix: work it out from their feedback and
-the cases they pointed to, then submit ONE revised proposal.
+You proposed a change to the triage harness of one customer ({customer}). It was sent back,
+either by an automated validity check or by the forward-deployed engineer (FDE). Neither will
+tell you the fix: work it out from the feedback and any cases pointed to, then submit ONE
+revised proposal.
 
 ## Current harness
 {harness}
@@ -13,10 +14,10 @@ the cases they pointed to, then submit ONE revised proposal.
 ## Your original proposal
 {original}
 
-## FDE feedback
+## Feedback
 {feedback}
 
-## Cases the FDE pointed to (records and the correct outcome)
+## Cases pointed to (records and the correct outcome)
 {counterexamples}
 
 ## How to revise
