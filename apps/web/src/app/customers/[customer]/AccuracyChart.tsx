@@ -16,12 +16,14 @@ type AccuracyChartProps = {
   points: Point[];
   noisePts: number;
   strongBaseline: number | null;
+  withoutAcc: number | null;
 };
 
-export function AccuracyChart({ points, noisePts, strongBaseline }: AccuracyChartProps) {
+export function AccuracyChart({ points, noisePts, strongBaseline, withoutAcc }: AccuracyChartProps) {
   const data = points.map((p) => ({
     label: p.label,
     acc: Math.round(p.acc * 1000) / 10,
+    without: withoutAcc === null ? null : Math.round(withoutAcc * 1000) / 10,
     band: [
       Math.max(0, Math.round(p.acc * 1000) / 10 - noisePts),
       Math.min(100, Math.round(p.acc * 1000) / 10 + noisePts),
@@ -57,7 +59,16 @@ export function AccuracyChart({ points, noisePts, strongBaseline }: AccuracyChar
             stroke="var(--color-primary)"
             strokeWidth={2}
             dot
-            name="report accuracy %"
+            name="with evolving harness (cheap model) %"
+            isAnimationActive={false}
+          />
+          <Line
+            dataKey="without"
+            type="stepAfter"
+            stroke="var(--color-content-muted)"
+            strokeWidth={2}
+            dot={false}
+            name="without: static base harness (same cheap model) %"
             isAnimationActive={false}
           />
           {strongBaseline !== null ? (
@@ -66,7 +77,7 @@ export function AccuracyChart({ points, noisePts, strongBaseline }: AccuracyChar
               stroke="var(--color-warning)"
               strokeDasharray="4 4"
               label={{
-                value: "strong model, base harness",
+                value: "strong model, base harness (~10x cost per call)",
                 fill: "var(--color-content-muted)",
                 fontSize: 12,
                 position: "insideTopRight",

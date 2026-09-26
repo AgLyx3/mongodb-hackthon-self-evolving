@@ -24,6 +24,7 @@ from harness.core.kernel import FdeDecision, Proposal, ReasonTag, unit_edit_dist
 from harness.core.units import Unit
 
 PERSONA = "Jordan (FDE, 6 yrs AML deployments)"
+FDE_ID = "sim-fde:jordan"
 
 
 @dataclass(frozen=True)
@@ -131,7 +132,7 @@ def decide(proposal: Proposal, live: list[Unit], key: list[KeySignal],
                  else Judgment("reject", "wrong", tj.signal_id, None, "that rule is right"))
     dist = unit_edit_distance(ch.add, j.final_unit) if j.action == "edit" else 0.0
     return FdeDecision(
-        proposal_id=proposal.proposal_id, action=j.action,  # type: ignore[arg-type]
+        proposal_id=proposal.proposal_id, fde_id=FDE_ID, action=j.action,  # type: ignore[arg-type]
         reason_tag=j.reason, rationale=_voice(j), final_unit=j.final_unit,
         edit_distance=dist if j.action == "edit" else (0.0 if j.action == "accept" else 1.0),
     ), j.signal_id

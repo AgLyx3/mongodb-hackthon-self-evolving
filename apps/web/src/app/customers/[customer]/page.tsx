@@ -6,6 +6,7 @@ import { Kpis } from "./Kpis";
 import { ProposalList } from "./ProposalList";
 import { Section } from "./Section";
 import { SourceHeatmap } from "./SourceHeatmap";
+import { TapInTable } from "./TapInTable";
 import { VersionList } from "./VersionList";
 
 export const dynamic = "force-dynamic";
@@ -36,9 +37,10 @@ export default async function CustomerPage({ params }: { params: Promise<{ custo
   const c = data.customers.find((x) => x.id === customer);
   if (!c) notFound();
   const noisePts = ((data.timeline.noise_cases ?? 0) / 40) * 100;
-  const points = data.timeline.versions
-    .filter((v) => v.holdout_acc !== null)
-    .map((v, i) => ({ label: `v${i}${v.batch ? ` (b${v.batch})` : ""}`, acc: v.holdout_acc as number }));
+  const points = data.metrics.holdout_by_batch.map((r) => ({
+    label: r.batch === 0 ? "start (0 alerts)" : `round ${r.batch} (${r.batch * 30} alerts)`,
+    acc: r.acc,
+  }));
   const strong = data.metrics.strong_baseline ?? null;
 
   return (
@@ -60,10 +62,22 @@ export default async function CustomerPage({ params }: { params: Promise<{ custo
       <Kpis metrics={data.metrics} strongBaseline={strong} />
 
       <Section
-        title="Accuracy by version (report cases)"
-        caption={`Measured on 40 report cases that no gate or decision ever sees. Shaded: noise band (±${noisePts.toFixed(1)} pts, from 3 re-runs of the unchanged harness on the gate's holdout). Dashed: a strong model on the base harness.`}
+        title="With vs without: accuracy by discovery round"
+        caption={`Measured on 40 report cases that no gate or decision ever sees. Shaded: noise band (±${noisePts.toFixed(1)} pts, from 3 re-runs of the unchanged harness on the gate's holdout). Gray: the same cheap model on the static base harness. Dashed: a strong model on the base harness.`}
       >
-        <AccuracyChart points={points} noisePts={noisePts} strongBaseline={strong} />
+        <AccuracyChart
+          points={points}
+          noisePts={noisePts}
+          strongBaseline={strong}
+          withoutAcc={data.metrics.static_base_acc}
+        />
+      </Section>
+
+      <Section
+        title="Time to tap in"
+        caption="Investigation cost per discovery round, measured in probe units (queries 1, reads 2, customer questions 3), not wall-clock. Decoy = sources the answer key marks irrelevant."
+      >
+        <TapInTable metrics={data.metrics} />
       </Section>
 
       <Section

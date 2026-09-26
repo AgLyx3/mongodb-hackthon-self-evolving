@@ -79,6 +79,7 @@ export type Proposal = {
   invalid?: string;
   gates: Gate[];
   fde: {
+    fde_id: string;
     action: string;
     reason_tag: string;
     rationale: string;
@@ -113,6 +114,22 @@ export type Metrics = {
   decoy_spend: Record<string, { total: number; irrelevant: number; irrelevant_share: number }>;
   spent_usd_total: number;
   strong_baseline: number | null;
+  static_base_acc: number | null;
+  rounds: RoundRow[];
+  ablation: { round: number; units: number; decoy: number }[];
+};
+
+export type RoundRow = {
+  round: number;
+  alerts_reviewed: number;
+  signals_learned: string[];
+  probe_units: number;
+  decoy_units: number;
+  units_per_signal: number | null;
+  fde_accepts: number;
+  fde_edits: number;
+  fde_rejects: number;
+  stopped_by_gates: number;
 };
 
 export type Harness = {

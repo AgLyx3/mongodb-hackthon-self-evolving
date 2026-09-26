@@ -30,7 +30,7 @@ def _proposal(change: Change, parent: str = V0.version_hash) -> Proposal:
 
 
 def _decision(action: str, final: Unit | None = None) -> FdeDecision:
-    return FdeDecision(proposal_id="p1", action=action, reason_tag="correct",  # type: ignore[arg-type]
+    return FdeDecision(proposal_id="p1", fde_id="fde:test", action=action, reason_tag="correct",  # type: ignore[arg-type]
                        rationale="r", final_unit=final)
 
 
@@ -115,7 +115,7 @@ def test_retire_and_supersede_edges():
     p2 = Proposal(proposal_id="p2", customer="bank", batch=2, parent_version=v1.version_hash,
                   change=Change(retire_hash=new.content_hash), hypothesis="h",
                   falsification_criterion="f")
-    d2 = FdeDecision(proposal_id="p2", action="accept", reason_tag="correct", rationale="r")
+    d2 = FdeDecision(proposal_id="p2", fde_id="fde:test", action="accept", reason_tag="correct", rationale="r")
     units2, v2 = promote(p2, d2, units, v1)
     assert v2.edge == "retires" and {u.unit_id for u in units2} == {"base.a", "base.guard"}
     # Same content as v0 means the same version hash: rollback-by-content is detectable.
@@ -141,14 +141,14 @@ def test_supersede_edge_and_replacement():
     p2 = Proposal(proposal_id="p2", customer="bank", batch=2, parent_version=v1.version_hash,
                   change=Change(add=repl, retire_hash=new.content_hash), hypothesis="h",
                   falsification_criterion="f")
-    d2 = FdeDecision(proposal_id="p2", action="accept", reason_tag="correct", rationale="r")
+    d2 = FdeDecision(proposal_id="p2", fde_id="fde:test", action="accept", reason_tag="correct", rationale="r")
     units2, v2 = promote(p2, d2, units, v1)
     assert v2.edge == "supersedes"
     assert {u.unit_id for u in units2} == {"base.a", "base.guard", "new2"}
 
 
 def test_decision_for_another_proposal_cannot_promote():
-    other = FdeDecision(proposal_id="someone-else", action="accept", reason_tag="correct",
+    other = FdeDecision(proposal_id="someone-else", fde_id="fde:test", action="accept", reason_tag="correct",
                         rationale="r")
     with pytest.raises(KernelError):
         promote(_proposal(Change(add=_unit("new"))), other, BASE, V0)
@@ -191,3 +191,10 @@ def test_render_places_units_in_the_right_sections_in_order():
     assert "[base.guard]" in sec["Guardrails (always apply)"]
     assert "[base.a]" in sec["Base triage policy (generic, applies to every customer)"]
     assert "[bank.rule.sleepers]" not in sec["Base triage policy (generic, applies to every customer)"]
+
+
+def test_unsigned_decision_cannot_promote():
+    d = FdeDecision(proposal_id="p1", fde_id="  ", action="accept", reason_tag="correct",
+                    rationale="r")
+    with pytest.raises(KernelError):
+        promote(_proposal(Change(add=_unit("new"))), d, BASE, V0)

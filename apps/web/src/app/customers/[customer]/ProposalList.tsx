@@ -20,7 +20,7 @@ function statusText(p: Proposal): { text: string; tone: string } {
 
 export function ProposalList({ proposals }: { proposals: Proposal[] }) {
   if (proposals.length === 0) {
-    return <p className="muted">No proposals yet. They appear after the first batch is reviewed.</p>;
+    return <p className="muted">No proposals yet. They appear after the first discovery round is reviewed.</p>;
   }
   return (
     <div style={{ borderTop: "1px solid var(--color-border)" }}>
@@ -41,7 +41,7 @@ export function ProposalList({ proposals }: { proposals: Proposal[] }) {
                 listStyle: "none",
               }}
             >
-              <span className="muted">batch {p.batch}</span>
+              <span className="muted">round {p.batch}</span>
               <span>{unit ? `${unit.kind}: ${unit.title}` : p.summary}</span>
               <span style={{ color: s.tone }}>{s.text}</span>
               <span className="muted">
@@ -107,7 +107,7 @@ export function ProposalList({ proposals }: { proposals: Proposal[] }) {
                     {edited ? `; after FDE edit: ${edited.detail}` : ""}
                   </p>
                 ) : null}
-                <div className="muted">FDE decision</div>
+                <div className="muted">FDE decision{p.fde ? `, signed by ${p.fde.fde_id}` : ""}</div>
                 <p style={{ margin: "var(--space-1) 0 var(--space-3)" }}>
                   {p.fde
                     ? `${p.fde.action} (${p.fde.reason_tag}), edit distance ${p.fde.edit_distance.toFixed(
@@ -120,7 +120,7 @@ export function ProposalList({ proposals }: { proposals: Proposal[] }) {
                   <ul style={{ margin: "var(--space-1) 0", paddingLeft: "var(--space-4)" }}>
                     {p.recalled.slice(0, 3).map((r) => (
                       <li key={r.proposal_id}>
-                        <span className="num">{r.score.toFixed(2)}</span> batch {r.batch}:{" "}
+                        <span className="num">{r.score.toFixed(2)}</span> round {r.batch}:{" "}
                         {r.fde_action
                           ? `FDE ${r.fde_action} (${r.fde_reason})`
                           : `stopped at gates`}{" "}
@@ -130,7 +130,7 @@ export function ProposalList({ proposals }: { proposals: Proposal[] }) {
                   </ul>
                 ) : (
                   <p className="muted" style={{ margin: "var(--space-1) 0" }}>
-                    Nothing recalled (first batch).
+                    Nothing recalled (first round).
                   </p>
                 )}
               </div>

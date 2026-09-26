@@ -42,6 +42,7 @@ class Proposal(BaseModel, frozen=True):
 
 class FdeDecision(BaseModel, frozen=True):
     proposal_id: str
+    fde_id: str  # who signed it; every screen shows who approved what
     action: FdeAction
     reason_tag: ReasonTag
     rationale: str
@@ -97,6 +98,8 @@ def promote(
     """The only path to a new live version. Requires accept or edit."""
     if decision.proposal_id != proposal.proposal_id:
         raise KernelError("decision is for a different proposal")
+    if not decision.fde_id.strip():
+        raise KernelError("decision has no signing FDE")
     if decision.action not in ("accept", "edit"):
         raise KernelError(f"cannot promote on FDE action {decision.action!r}")
     if proposal.parent_version != current_version.version_hash:

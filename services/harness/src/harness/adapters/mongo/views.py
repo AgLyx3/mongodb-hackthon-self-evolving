@@ -90,6 +90,9 @@ async def proposals(customer: str) -> list[dict[str, Any]]:
         match = await eval_db()["fde_matches"].find_one({"proposal_id": p["id"]})
         p["gates"] = gates
         p["fde"] = _clean(dec) if dec else None
+        if p["fde"] is not None and not p["fde"].get("fde_id"):
+            # Decisions recorded before fde_id existed were all made by the simulated FDE.
+            p["fde"]["fde_id"] = "sim-fde:jordan (pre-field)"
         summary = next((g for g in gates if g["gate"] == "summary"), None)
         p["outcome"] = summary["detail"] if summary else "pending"
         p["promoted"] = bool(dec and dec.get("promoted"))
@@ -146,7 +149,37 @@ async def metrics(customer: str) -> dict[str, Any]:
     comp = await db["comparisons"].find_one({"_id": customer})
     strong = next((r["acc"] for r in (comp or {}).get("rows", [])
                    if r["harness"] == "base" and r["role"] == "strong"), None)
+    # Per discovery round: what was learned, and at what investigation cost.
+    probes: dict[str, dict[str, float]] = defaultdict(lambda: {"units": 0.0, "decoy": 0.0})
+    relevant: set[str] = set()
+    async for sig in ev["answer_key"].find({"customer": customer}):
+        relevant.update(sig["locations"])
+    async for pr in db["probes"].find({"customer": customer}):
+        tag = f"{pr['batch']}:{pr['run_tag']}"
+        probes[tag]["units"] += pr["cost"]
+        srcs = pr["sources"] or ["(none)"]
+        probes[tag]["decoy"] += pr["cost"] * sum(x not in relevant for x in srcs) / len(srcs)
+    rounds = []
+    for b in sorted({d["batch"] for d in decs} | {r["batch"] for r in reports if r["batch"]}):
+        new_sigs = sorted({matches.get(d["proposal_id"]) for d in promoted
+                           if d["batch"] == b and matches.get(d["proposal_id"]) in planted})
+        stops = await db["gate_results"].count_documents(
+            {"customer": customer, "batch": b, "gate": "summary", "passed": False})
+        rej = sum(d["batch"] == b and d["action"] == "reject" for d in decs)
+        main = probes.get(f"{b}:main", {"units": 0.0, "decoy": 0.0})
+        rounds.append({
+            "round": b, "alerts_reviewed": 30 * b, "signals_learned": new_sigs,
+            "probe_units": main["units"], "decoy_units": round(main["decoy"], 1),
+            "units_per_signal": round(main["units"] / len(new_sigs), 1) if new_sigs else None,
+            "fde_accepts": sum(d["batch"] == b and d["action"] == "accept" for d in decs),
+            "fde_edits": sum(d["batch"] == b and d["action"] == "edit" for d in decs),
+            "fde_rejects": rej, "stopped_by_gates": stops - rej,
+        })
+    ablation = [{"round": int(k.split(":")[0]), **v} for k, v in probes.items()
+                if k.endswith(":ablation_no_priors")]
+    base_report = reports[0].get("report_acc") if reports else None
     return {
+        "rounds": rounds, "ablation": ablation, "static_base_acc": base_report,
         "strong_baseline": strong,
         "planted_signals": planted, "signals_learned": found,
         "signal_recall": len(found) / len(planted) if planted else 0,

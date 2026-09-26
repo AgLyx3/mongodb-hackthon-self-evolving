@@ -121,3 +121,9 @@ def test_supersede_cannot_replace_a_correct_rule_for_another_signal():
 def test_decide_records_edit_distance_for_edits():
     d, _ = decide(_prop(Change(add=_rule(("a.x", ">=", 5)))), [], [SIG], RECORDS)
     assert d.action == "edit" and 0 < d.edit_distance < 1
+
+
+def test_simulated_fde_signs_its_decisions():
+    from harness.core.fde import FDE_ID
+    d, _ = decide(_prop(Change(add=_rule(("a.x", ">=", 5)))), [], [SIG], RECORDS)
+    assert d.fde_id == FDE_ID
