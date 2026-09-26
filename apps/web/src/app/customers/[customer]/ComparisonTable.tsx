@@ -1,7 +1,8 @@
 import type { Comparison } from "@/lib/api";
 
 export function ComparisonTable({ comparison }: { comparison: Comparison }) {
-  if (comparison.rows.length === 0) {
+  const rows = comparison.rows ?? [];
+  if (rows.length === 0) {
     return <p className="muted">No comparison yet. Run scripts/final_compare.py after the loop.</p>;
   }
   return (
@@ -16,7 +17,7 @@ export function ComparisonTable({ comparison }: { comparison: Comparison }) {
         </tr>
       </thead>
       <tbody>
-        {comparison.rows.map((r) => (
+        {rows.map((r) => (
           <tr key={`${r.harness}-${r.role}`} style={{ borderTop: "1px solid var(--color-border)" }}>
             <td style={{ padding: "var(--space-2) 0" }}>
               {r.harness === "base" ? "Base (generic)" : "Evolved for this customer"}

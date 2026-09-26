@@ -217,7 +217,9 @@ async def _decoy_spend(customer: str) -> dict[str, Any]:
 
 async def comparison(customer: str) -> dict[str, Any]:
     doc = await app_db()["comparisons"].find_one({"_id": customer})
-    return _clean(doc) if doc else {"rows": []}
+    out = _clean(doc) if doc else {}
+    out.setdefault("rows", [])
+    return out
 
 
 async def probes(customer: str) -> list[dict[str, Any]]:
